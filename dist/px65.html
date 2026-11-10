@@ -1,0 +1,2536 @@
+<!doctype html>
+<!-- PX-65 emulator v0.11.19. CC0 1.0 Universal (public domain dedication): https://creativecommons.org/publicdomain/zero/1.0/ -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f2b45">
+<title>PX-65</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Semi+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --desk: #74808c;
+  --desk-shade: #67727d;
+  --body: #1f2b45;
+  --body-edge: #141c30;
+  --plate: #2b3a5e;
+  --silk: #c5cfe2;
+  --silk-dim: #8391ad;
+  --lcd: #a7b893;
+  --lcd-ink: #222b1e;
+  --lcd-ghost: #9cad88;
+  --key-alpha: #e8e3d7;
+  --key-alpha-ink: #2c2822;
+  --key-pad: #93a0b6;
+  --key-pad-ink: #172036;
+  --key-fn: #d8a52b;
+  --key-fn-ink: #2a2008;
+  --key-brk: #c23b2f;
+  --key-brk-ink: #fff4ef;
+  --panel: #eceef1;
+  --panel-line: #c9ced6;
+  --ink: #1b2130;
+  --ink-soft: #566074;
+  --accent: #2b3a5e;
+  --mono: "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, ui-monospace, monospace;
+  --sans: "Saira Semi Condensed", "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--desk);
+  background-image: radial-gradient(circle at 30% 20%, #7f8b97 0, var(--desk) 45%, var(--desk-shade) 100%);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.45;
+  touch-action: manipulation; /* ダブルタップでの拡大を防ぐ */
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, input, select { font: inherit; color: inherit; }
+button:focus-visible, select:focus-visible, input:focus-visible, .check:has(input:focus-visible) {
+  outline: 2px solid #ffd76a;
+  outline-offset: 2px;
+}
+
+.desk {
+  display: grid;
+  grid-template-columns: minmax(0, 680px) 360px;
+  gap: 28px;
+  justify-content: center;
+  align-items: start;
+  padding: 40px 24px 48px;
+}
+
+/* ---------- 本体 ---------- */
+
+.unit {
+  background: var(--body);
+  border-radius: 18px 18px 26px 26px;
+  padding: 22px 22px 26px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -4px 0 var(--body-edge),
+    0 18px 30px rgba(20, 28, 48, 0.45);
+}
+
+.plate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 18px 22px;
+  align-items: end;
+  background: var(--plate);
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+}
+
+.brand {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  color: var(--silk);
+}
+.brand .model {
+  font-size: 26px;
+  font-weight: 700;
+  font-style: italic;
+  letter-spacing: 0.02em;
+}
+.brand .line {
+  flex: 1;
+  height: 3px;
+  align-self: center;
+  background: repeating-linear-gradient(90deg, var(--key-fn) 0 22px, transparent 22px 26px);
+  opacity: 0.85;
+}
+.brand .sub { font-size: 13px; color: var(--silk-dim); }
+
+.bezel {
+  background: #10182b;
+  border-radius: 8px;
+  padding: 10px 14px 14px;
+}
+.ann {
+  display: grid;
+  grid-template-columns: repeat(8, auto);
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.ann span { color: #2a3349; transition: color 60ms; }
+.ann span.on { color: var(--lcd); }
+#lcd {
+  display: block;
+  width: 384px;
+  max-width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+  border-radius: 3px;
+}
+
+.fkeys {
+  display: grid;
+  grid-template-columns: repeat(2, 54px);
+  gap: 10px;
+  align-self: stretch;
+  align-content: end;
+}
+.fkeys .arrows {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.keys {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "alpha pad" "bottom pad";
+  gap: 8px 18px;
+  margin-top: 20px;
+}
+.alpha { grid-area: alpha; display: grid; gap: 8px; }
+.alpha .row, .bottom { display: flex; gap: 6px; }
+.alpha .row:nth-child(2) { padding-left: 16px; }
+.alpha .row:nth-child(3) { padding-left: 32px; }
+.bottom { grid-area: bottom; }
+.pad {
+  grid-area: pad;
+  display: grid;
+  grid-template-columns: repeat(4, 42px);
+  gap: 8px 6px;
+  align-content: start;
+}
+.mobile-only, .key.mobile-only { display: none; }
+
+.key {
+  --face: var(--key-alpha);
+  --ink-k: var(--key-alpha-ink);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 36px;
+  flex: 1 1 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px 6px 8px 8px;
+  background: var(--face);
+  color: var(--ink-k);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.22), 0 2px 0 rgba(0, 0, 0, 0.35);
+  transition: transform 40ms, box-shadow 40ms;
+}
+.key .sub {
+  position: absolute;
+  top: 2px;
+  right: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  opacity: 0.7;
+}
+.key.down {
+  transform: translateY(2px);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.22), 0 0 0 rgba(0, 0, 0, 0.35);
+}
+.key.num { --face: var(--key-pad); --ink-k: var(--key-pad-ink); }
+.key.op { --face: var(--key-pad); --ink-k: var(--key-pad-ink); font-size: 18px; }
+.key.fn { --face: var(--key-fn); --ink-k: var(--key-fn-ink); font-size: 13px; }
+.key.brk { --face: var(--key-brk); --ink-k: var(--key-brk-ink); font-size: 13px; }
+.key.wide { flex-grow: 1.8; }
+.key.space { flex-grow: 5; }
+.key.mode { --face: #5d6b88; --ink-k: #f1f4fa; font-size: 13px; flex-grow: 1.2; }
+
+/* ---------- 操作 ---------- */
+
+.controls {
+  margin-top: 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: center;
+  color: #f2f4f7;
+}
+.controls .group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.controls .sep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.25); }
+
+.btn {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(20, 28, 48, 0.35);
+  color: #f6f7f9;
+  border-radius: 6px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.btn:hover { background: rgba(20, 28, 48, 0.55); }
+.btn.power[aria-pressed="true"] { background: #2f6a3f; border-color: #6fbf85; }
+.btn.power[aria-pressed="false"] { background: #5a2a26; border-color: #c4766e; }
+select.btn { padding-right: 6px; }
+.check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn:disabled:hover { background: rgba(20, 28, 48, 0.35); }
+.tapeinfo { font-size: 14px; color: #e4e8ee; }
+.check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--key-fn); }
+
+.status {
+  margin: 10px 0 0;
+  min-height: 1.45em;
+  color: #f2f4f7;
+  font-size: 14px;
+}
+.status.error { color: #ffd2cc; }
+
+.howto {
+  margin: 14px 0 0;
+  color: #e4e8ee;
+  font-size: 14px;
+  max-width: 60ch;
+}
+.howto .touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .howto .pc { display: none; }
+  .howto .touch { display: inline; }
+}
+.version {
+  margin: 10px 0 0;
+  color: #8a93a0;
+  font-size: 12px;
+}
+.howto kbd {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(20, 28, 48, 0.4);
+}
+
+/* ---------- デバッガ ---------- */
+
+.debug {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 10px 24px rgba(20, 28, 48, 0.25);
+}
+.debug h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+.debug h3 {
+  margin: 16px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.debug .head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 12px; }
+.debug .state { font-size: 14px; color: var(--ink-soft); }
+.debug .state b { color: var(--ink); font-weight: 600; }
+
+.dbtn {
+  border: 1px solid var(--panel-line);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.dbtn:hover { border-color: var(--accent); }
+.dbtn:disabled { opacity: 0.45; cursor: default; }
+.dbtn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.drow { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+
+.hexin {
+  width: 7ch;
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 3px 6px;
+  border: 1px solid var(--panel-line);
+  border-radius: 5px;
+  background: #fff;
+}
+
+.regs {
+  display: grid;
+  grid-template-columns: repeat(6, auto);
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 13px;
+}
+.regs div { display: grid; }
+.regs span { color: var(--ink-soft); font-family: var(--sans); font-size: 12px; }
+.flags { margin-top: 8px; font-family: var(--mono); font-size: 13px; letter-spacing: 0.3em; }
+.flags .off { color: #b3b9c4; }
+.cycles { margin-top: 4px; font-size: 13px; color: var(--ink-soft); }
+
+.code, .mem {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+  background: #fff;
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.code .cur { background: #ffe8a3; display: inline-block; width: 100%; }
+.code .bp { color: #b3261e; }
+.bps { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); }
+
+@media (max-width: 1100px) {
+  .desk { grid-template-columns: minmax(0, 680px); }
+}
+/* ---------- スマートフォン(縦持ちと横持ちで共通) ---------- */
+@media (max-width: 640px), (orientation: landscape) and (max-height: 500px) {
+  .desk { display: block; padding: 0 0 32px; }
+  .unit {
+    height: 100vh;
+    height: 100svh;               /* ブラウザのバーを除いた高さに収める */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-radius: 0;
+    padding: max(10px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+             max(10px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .plate { grid-template-columns: 1fr; gap: 10px; padding: 10px; }
+  .brand { gap: 10px; }
+  .brand .model { font-size: 20px; }
+  .brand .sub { font-size: 12px; }
+  .bezel { padding: 8px 10px 10px; }
+  .ann { font-size: 10px; gap: 2px; margin-bottom: 4px; }
+  #lcd { width: 100%; }
+  .fkeys { grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .fkeys .arrows { grid-column: 3 / -1; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .fkeys .key { height: 40px; }
+
+  /* キーボードは残りの高さいっぱいに広げ、文字キーと数字キーをタブで切り替える */
+  .keys {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: 420px;
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .alpha, .pad { flex: 1 1 0; min-height: 0; gap: 6px; }
+  .alpha { grid-template-rows: repeat(3, 1fr); }
+  .pad { grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr); }
+  .bottom { flex: 0 0 auto; height: clamp(44px, 9svh, 56px); order: 2; }
+  .alpha, .pad { order: 1; }
+  .keys[data-tab="alpha"] .pad, .keys[data-tab="num"] .alpha { display: none; }
+  .alpha .row, .bottom { gap: 4px; }
+  .alpha .row:nth-child(2) { padding-left: 4.5%; }
+  .alpha .row:nth-child(3) { padding-left: 9%; }
+  .key { height: auto; min-height: 40px; font-size: 18px; }
+  .key.fn, .key.brk, .key.mode { font-size: 14px; }
+  /* SHIFT で出る文字: 指で押すキーは大きいので、文字も大きく濃くする */
+  .key .sub { top: 5px; right: 7px; font-size: 15px; font-weight: 700; opacity: 0.85; }
+  /* 文字キーと数字キーの文字(SHIFT なし)も大きくする */
+  .alpha .key, .pad .key { font-size: 20px; }
+  .pad .key.op { font-size: 22px; }   /* ÷ × − + = は細く見えるので少し大きく */
+  .mobile-only, .key.mobile-only { display: flex; }
+
+  .controls, .status, .howto, .version { padding: 0 14px; }
+  .controls .sep { display: none; }
+  .btn { padding: 8px 14px; }
+  .debug { display: none; margin: 18px 10px 0; }
+  body.show-debug .debug { display: block; }
+}
+
+/* 縦持ち: 液晶を少し大きく見せるため、ブランドの「Pocket Computer」を省く */
+@media (max-width: 640px) {
+  .brand .sub { display: none; }
+}
+
+/* 横持ち: 左に液晶、右にキーボード */
+@media (orientation: landscape) and (max-height: 500px) {
+  .unit {
+    display: grid;
+    grid-template-columns: minmax(0, 44%) 1fr;
+    gap: 12px;
+  }
+  .plate { display: flex; flex-direction: column; align-items: stretch; overflow: hidden; }
+  .fkeys { margin-top: auto; }
+  .bezel { padding: 6px 8px 8px; }
+  #lcd { width: auto; max-width: 100%; max-height: calc(100svh - 150px); margin: 0 auto; }
+  .fkeys .key { height: 36px; min-height: 36px; }
+  .keys { max-height: none; height: 100%; margin-top: 0; }
+  .key { min-height: 32px; font-size: 16px; }
+  .key .sub { top: 4px; right: 6px; font-size: 14px; }
+  .alpha .key, .pad .key { font-size: 18px; }
+  .pad .key.op { font-size: 20px; }
+  .bottom { height: clamp(36px, 14svh, 48px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .key, .ann span { transition: none; }
+}
+</style>
+</head>
+<body>
+<main class="desk">
+  <div>
+    <section class="unit" aria-label="PX-65 本体">
+      <div class="plate">
+        <div class="brand">
+          <span class="model">PX-65</span>
+          <span class="line" aria-hidden="true"></span>
+          <span class="sub">Pocket Computer</span>
+        </div>
+        <div class="bezel">
+          <div class="ann" id="ann" aria-hidden="true">
+            <span>BUSY</span><span>SHIFT</span><span>CAPS</span><span>DEG</span>
+            <span>RAD</span><span>RUN</span><span>PRO</span><span>LOW</span>
+          </div>
+          <canvas id="lcd" width="480" height="160" role="img" aria-label="液晶画面"></canvas>
+        </div>
+        <div class="fkeys" id="fkeys"></div>
+      </div>
+      <div class="keys" id="keys" data-tab="alpha">
+        <div class="alpha" id="alpha"></div>
+        <div class="bottom" id="bottom"></div>
+        <div class="pad" id="pad"></div>
+      </div>
+    </section>
+
+    <div class="controls">
+      <div class="group">
+        <button class="btn power" id="power" aria-pressed="true">電源オン</button>
+        <button class="btn" id="reset">リセット</button>
+        <button class="btn" id="clearRam">RAMを消去</button>
+        <button class="btn mobile-only" id="dbgToggle" aria-expanded="false" aria-controls="debug">デバッガを表示</button>
+      </div>
+      <span class="sep" aria-hidden="true"></span>
+      <div class="group">
+        <button class="btn" id="romLoad">ROMを読み込む</button>
+        <button class="btn" id="romBuiltin">内蔵ROMに戻す</button>
+        <input type="file" id="romFile" accept=".bin,.rom,application/octet-stream" hidden>
+      </div>
+      <span class="sep" aria-hidden="true"></span>
+      <div class="group">
+        <button class="btn" id="tapeInsert">テープを入れる</button>
+        <button class="btn" id="tapeSave">テープを保存</button>
+        <button class="btn" id="tapeEject">テープを取り出す</button>
+        <span class="tapeinfo" id="tapeInfo"></span>
+        <input type="file" id="tapeFile" accept=".tap,.bin,application/octet-stream" hidden>
+      </div>
+      <span class="sep" aria-hidden="true"></span>
+      <div class="group">
+        <label class="check">速度
+          <select class="btn" id="speed">
+            <option value="1">×1</option>
+            <option value="2">×2</option>
+            <option value="4">×4</option>
+            <option value="10">×10</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="sound" checked>音</label>
+        <label class="check" id="vibrateOption" hidden><input type="checkbox" id="vibrate" checked>キーを押したら振動</label>
+        <label class="check"><input type="checkbox" id="oneShotShift" checked>SHIFTは次の1文字だけ</label>
+        <label class="check"><input type="checkbox" id="keepRam">電源を切ってもRAMを残す</label>
+      </div>
+      <span class="sep" aria-hidden="true"></span>
+      <div class="group">
+        <button class="btn" id="stateSave">状態を保存</button>
+        <button class="btn" id="stateLoad">状態を読み込む</button>
+      </div>
+    </div>
+    <p class="status" id="status" role="status"></p>
+    <p class="howto">
+      <span class="pc">画面のキーをクリックするか、PCのキーボードで入力できます。<kbd>Enter</kbd> がRET、<kbd>Backspace</kbd> がDEL、<kbd>Esc</kbd> がBREAKです。音はページを一度クリックすると鳴るようになります。</span>
+      <span class="touch">「123」のキーで数字キーに、「ABC」で文字キーに切り替わります。音は画面を一度タップすると鳴るようになります。iPhoneはマナーモードのときは音が出ません。</span>
+    </p>
+    <p class="version">PX-65 emulator v0.11.19</p>
+  </div>
+
+  <aside class="debug" id="debug" aria-label="デバッガ">
+    <div class="head">
+      <h2>デバッガ</h2>
+      <div class="state" id="dbgState"></div>
+    </div>
+    <div class="drow">
+      <button class="dbtn primary" id="dbgRun">一時停止</button>
+      <button class="dbtn" id="dbgStep">1命令進める</button>
+      <button class="dbtn" id="dbgFrame">1フレーム進める</button>
+    </div>
+
+    <h3>レジスタ</h3>
+    <div class="regs" id="regs"></div>
+    <div class="flags" id="flags"></div>
+    <div class="cycles" id="cycles"></div>
+
+    <h3>逆アセンブル</h3>
+    <pre class="code" id="code"></pre>
+    <div class="drow">
+      <label class="check">ブレークポイント <input class="hexin" id="bpAddr" placeholder="C079" spellcheck="false"></label>
+      <button class="dbtn" id="bpAdd">追加</button>
+      <button class="dbtn" id="bpClear">すべて解除</button>
+    </div>
+    <div class="bps" id="bps"></div>
+
+    <h3>メモリ</h3>
+    <div class="drow" style="margin-top:0;margin-bottom:6px">
+      <label class="check">先頭アドレス <input class="hexin" id="memAddr" value="0400" spellcheck="false"></label>
+    </div>
+    <pre class="mem" id="mem"></pre>
+  </aside>
+</main>
+<script>
+(() => {
+'use strict';
+const BUILTIN_ROM_BASE64 = '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YLZ6CIiIiXwqqqqrfiqqqquAAAAAAIEAAAAAgQAAAAAIfQiIiIl9HYnYnn06LoujfWOOOOR+Ekkkkn5MzMzNfyqqqquBAAAAAAp815Q15Xxw8PDxfYiIiIl9HYnYnn26LoujfWOOOOR+kkkkkn5MzMzNf6qqqquBAAAAAAX14QAAmJaAAA9CQAABhqAAACcQAAAD6AAAAGQAAAAKAAAAAf///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////3jYov+aqYGNA4CcAoCtiALJpdAdrYkCyVrQFq19AskDsA+tfALJArAIILD0nLECgESiAJ4AAujQ+qLgdADo0Pup/6IDnXQCyhD6qQCNYgKNhAKNhgKNigKpBo1jAo2FAo2HAo2LAqmljYgCqVqNiQKpAY2xAqIFvRLhncACyhD3nBgCnBkCnBwCnB0Cqf+NGgKiB54QAsoQ+qn/jWgCjWkCqQGNawKcbAIg1+CQDK2xAvADTACgGEwDoCDI4iCJ41BYLTY1IE1PTklUT1INVjAuMTEATCflogS9BqDd6ODQBcoQ9ThgGGBCQVNJQ3jYogW9EuGdwALKEPep/41pAo1oAqkBjWsCnGwCqSEcAoBMJ+Uv4Uz1ivVI2rq9AwEpENAF+mhswAL6aGzCAmzEAkjaWqmBjRCA5vLQAubzIEThevpoQKn/hfqiAL1A9o0AgK0BgEn/4APQF0gpEI0cAvAHqQIMAoCABakCHAKAaCnvhfm9EAJJ/yX5SKX5nRACaPAWJPoQEqAASrADyID6hPuKCgoKBfuF+ujgCNCtqf+NAICl+jAMjRoCqSCNGwKl+oAsrRoCMCZKSkqorRoCKQeqvTj2ORAC8A/OGwLQD6kEjRsCrRoCgAap/40aAmCqrRwC8AW9iPaAA71I9vASrhkCnQAC6IopD80YAvADjRkCYK0dAvAFnB0COGDarhgC7BkC8A+9AAJI6IopD40YAmj6OGD6GGAgAeKwGaXyKRDwCaX38AwgL+OAB6X30AMgL+PLgOJIIEzjaGBI2lrJDfAkyQjwKskM8CHJIJAUyX+wEKbu4BCQBUggmOJoIOHi5u56+mhgIJjigPcgyOKA8qXu8ATG7oAKpe/w5sbvqQ+F7qkgIOHigNlk7ubvpe/JBJAHIKriqQOF72CiAL1gBJ0ABOjgwND1ogC9IAWdwASeIAXo4GDQ8mCiAJ4A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Q0lOWEJFUVNFRFBMWAEBAgICAgICAgMDAwMDAgMBAgMAACMAAAAoKCgAAAAoKAAAAAAAAAUBAQEBAQEBAgICAgIDBAABAgAAAAAsLCwpKQAsLCksAAAAAAAAAAAAWFlYLAAAWFkAWAAAAAAAAAAAAAAAKVkAAAAAACkAAAAAAP////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////9MSuJMJuJMAeJMweNMY+NMieNMpeNMyOJM3OJMs/VMyuNM7eBMNO9M5u9MU/BMTOP/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////LOEA4Bjh';
+const UI_LANG = 'ja';
+const __modules = {};
+
+// ===== src/cpu65c02.js =====
+__modules['src/cpu65c02.js'] = (() => {
+// PX-65 エミュレーター: WDC 65C02 CPUコア
+//
+// - WDC 65C02の全命令(RMB/SMB/BBR/BBS、WAI/STPを含む)
+// - 命令ごとのサイクル数(ページ境界越え、分岐成立、10進モードの追加サイクルを含む)
+// - リセット、IRQ(レベル)、NMI(エッジ)、WAI、STP
+// - 未定義命令は65C02の仕様どおり、決まった長さとサイクル数のNOPとして動く
+//
+// バスは { read(addr), write(addr, value) } を持つオブジェクト。
+// ダミーリード(実機が捨てる読み出し)は行わないので、I/Oの読み出しに副作用があっても安全。
+
+const F_C = 0x01; // キャリー
+const F_Z = 0x02; // ゼロ
+const F_I = 0x04; // 割り込み禁止
+const F_D = 0x08; // 10進モード
+const F_B = 0x10; // BRK(スタックに積んだ値にだけ意味がある)
+const F_U = 0x20; // 常に1
+const F_V = 0x40; // オーバーフロー
+const F_N = 0x80; // ネガティブ
+
+// 命令表: "オペコード ニーモニック アドレッシング サイクル数"
+// サイクル数の後ろの * は、ページ境界を越えたら1サイクル追加の意味。
+//
+// アドレッシング:
+//   imp 暗黙  acc アキュムレーター  imm 即値  zp ゼロページ  zpx/zpy ゼロページ,X/Y
+//   abs 絶対  abx/aby 絶対,X/Y  ind (絶対)  aix (絶対,X)  izx (ZP,X)  izy (ZP),Y
+//   izp (ZP)  rel 相対  zpr ZP+相対(BBR/BBS)
+//   n1/n2/n3 未定義命令のNOP(1/2/3バイト)
+const SPEC = `
+00 BRK imp 7   01 ORA izx 6   02 NOP n2 2    04 TSB zp 5    05 ORA zp 3    06 ASL zp 5    08 PHP imp 3
+09 ORA imm 2   0A ASL acc 2   0C TSB abs 6   0D ORA abs 4   0E ASL abs 6
+10 BPL rel 2   11 ORA izy 5*  12 ORA izp 5   14 TRB zp 5    15 ORA zpx 4   16 ASL zpx 6   18 CLC imp 2
+19 ORA aby 4*  1A INC acc 2   1C TRB abs 6   1D ORA abx 4*  1E ASL abx 6*
+20 JSR abs 6   21 AND izx 6   22 NOP n2 2    24 BIT zp 3    25 AND zp 3    26 ROL zp 5    28 PLP imp 4
+29 AND imm 2   2A ROL acc 2   2C BIT abs 4   2D AND abs 4   2E ROL abs 6
+30 BMI rel 2   31 AND izy 5*  32 AND izp 5   34 BIT zpx 4   35 AND zpx 4   36 ROL zpx 6   38 SEC imp 2
+39 AND aby 4*  3A DEC acc 2   3C BIT abx 4*  3D AND abx 4*  3E ROL abx 6*
+40 RTI imp 6   41 EOR izx 6   42 NOP n2 2    44 NOP n2 3    45 EOR zp 3    46 LSR zp 5    48 PHA imp 3
+49 EOR imm 2   4A LSR acc 2   4C JMP abs 3   4D EOR abs 4   4E LSR abs 6
+50 BVC rel 2   51 EOR izy 5*  52 EOR izp 5   54 NOP n2 4    55 EOR zpx 4   56 LSR zpx 6   58 CLI imp 2
+59 EOR aby 4*  5A PHY imp 3   5C NOP n3 8    5D EOR abx 4*  5E LSR abx 6*
+60 RTS imp 6   61 ADC izx 6   62 NOP n2 2    64 STZ zp 3    65 ADC zp 3    66 ROR zp 5    68 PLA imp 4
+69 ADC imm 2   6A ROR acc 2   6C JMP ind 6   6D ADC abs 4   6E ROR abs 6
+70 BVS rel 2   71 ADC izy 5*  72 ADC izp 5   74 STZ zpx 4   75 ADC zpx 4   76 ROR zpx 6   78 SEI imp 2
+79 ADC aby 4*  7A PLY imp 4   7C JMP aix 6   7D ADC abx 4*  7E ROR abx 6*
+80 BRA rel 2   81 STA izx 6   82 NOP n2 2    84 STY zp 3    85 STA zp 3    86 STX zp 3    88 DEY imp 2
+89 BIT imm 2   8A TXA imp 2   8C STY abs 4   8D STA abs 4   8E STX abs 4
+90 BCC rel 2   91 STA izy 6   92 STA izp 5   94 STY zpx 4   95 STA zpx 4   96 STX zpy 4   98 TYA imp 2
+99 STA aby 5   9A TXS imp 2   9C STZ abs 4   9D STA abx 5   9E STZ abx 5
+A0 LDY imm 2   A1 LDA izx 6   A2 LDX imm 2   A4 LDY zp 3    A5 LDA zp 3    A6 LDX zp 3    A8 TAY imp 2
+A9 LDA imm 2   AA TAX imp 2   AC LDY abs 4   AD LDA abs 4   AE LDX abs 4
+B0 BCS rel 2   B1 LDA izy 5*  B2 LDA izp 5   B4 LDY zpx 4   B5 LDA zpx 4   B6 LDX zpy 4   B8 CLV imp 2
+B9 LDA aby 4*  BA TSX imp 2   BC LDY abx 4*  BD LDA abx 4*  BE LDX aby 4*
+C0 CPY imm 2   C1 CMP izx 6   C2 NOP n2 2    C4 CPY zp 3    C5 CMP zp 3    C6 DEC zp 5    C8 INY imp 2
+C9 CMP imm 2   CA DEX imp 2   CB WAI imp 3   CC CPY abs 4   CD CMP abs 4   CE DEC abs 6
+D0 BNE rel 2   D1 CMP izy 5*  D2 CMP izp 5   D4 NOP n2 4    D5 CMP zpx 4   D6 DEC zpx 6   D8 CLD imp 2
+D9 CMP aby 4*  DA PHX imp 3   DB STP imp 3   DC NOP n3 4    DD CMP abx 4*  DE DEC abx 7
+E0 CPX imm 2   E1 SBC izx 6   E2 NOP n2 2    E4 CPX zp 3    E5 SBC zp 3    E6 INC zp 5    E8 INX imp 2
+E9 SBC imm 2   EA NOP imp 2   EC CPX abs 4   ED SBC abs 4   EE INC abs 6
+F0 BEQ rel 2   F1 SBC izy 5*  F2 SBC izp 5   F4 NOP n2 4    F5 SBC zpx 4   F6 INC zpx 6   F8 SED imp 2
+F9 SBC aby 4*  FA PLX imp 4   FC NOP n3 4    FD SBC abx 4*  FE INC abx 7
+`;
+
+function buildTable() {
+  const table = new Array(256);
+  const re = /([0-9A-F]{2}) (\w{3}) (\w+) (\d)(\*?)/g;
+  let m;
+  while ((m = re.exec(SPEC))) {
+    table[parseInt(m[1], 16)] = {
+      name: m[2], mode: m[3], cycles: Number(m[4]), penalty: m[5] === '*',
+    };
+  }
+  for (let n = 0; n < 8; n++) {
+    // RMBn/SMBn: x7, BBRn/BBSn: xF
+    table[(n << 4) | 0x07] = { name: 'RMB', mode: 'zp', cycles: 5, penalty: false };
+    table[((n + 8) << 4) | 0x07] = { name: 'SMB', mode: 'zp', cycles: 5, penalty: false };
+    table[(n << 4) | 0x0f] = { name: 'BBR', mode: 'zpr', cycles: 5, penalty: false };
+    table[((n + 8) << 4) | 0x0f] = { name: 'BBS', mode: 'zpr', cycles: 5, penalty: false };
+  }
+  // 残りの未定義命令(x3列と、WAI/STP以外のxB列)は1バイト1サイクルのNOP
+  for (let op = 0; op < 256; op++) {
+    if (!table[op]) table[op] = { name: 'NOP', mode: 'n1', cycles: 1, penalty: false };
+  }
+  return table;
+}
+
+const OPCODES = buildTable();
+
+class CPU65C02 {
+  constructor(bus) {
+    this.bus = bus;
+    this.a = 0; this.x = 0; this.y = 0;
+    this.s = 0xfd;
+    this.p = F_U | F_B | F_I;
+    this.pc = 0;
+    this.cycles = 0;          // 起動からの累計サイクル数
+    this.irq = false;         // IRQ線の状態(レベル)。システム側が毎回セットする
+    this.nmiPending = false;  // NMIはエッジで受け付ける
+    this.waiting = false;     // WAIで停止中
+    this.stopped = false;     // STPで停止中
+    this._crossed = false;
+  }
+
+  // ---- 外部から使うメソッド ----
+
+  reset() {
+    this.s = 0xfd;
+    this.p = (this.p | F_I | F_U | F_B) & ~F_D;
+    this.waiting = false;
+    this.stopped = false;
+    this.nmiPending = false;
+    this.pc = this.read16(0xfffc);
+    this.cycles += 7;
+  }
+
+  nmi() { this.nmiPending = true; }
+
+  setIRQ(level) { this.irq = !!level; }
+
+  // 1命令(または割り込みの受け付け)を実行し、かかったサイクル数を返す
+  step() {
+    const start = this.cycles;
+
+    if (this.stopped) { this.cycles += 1; return 1; }
+
+    if (this.waiting) {
+      if (this.nmiPending || this.irq) {
+        this.waiting = false;
+      } else {
+        this.cycles += 1;
+        return 1;
+      }
+    }
+
+    if (this.nmiPending) {
+      this.nmiPending = false;
+      this.interrupt(0xfffa, false);
+      return this.cycles - start;
+    }
+    if (this.irq && !(this.p & F_I)) {
+      this.interrupt(0xfffe, false);
+      return this.cycles - start;
+    }
+
+    const op = this.read(this.pc);
+    this.pc = (this.pc + 1) & 0xffff;
+    const e = OPCODES[op];
+    this._crossed = false;
+    const addr = this.resolve(e.mode);
+    this.cycles += e.cycles;
+    if (e.penalty && this._crossed) this.cycles += 1;
+    this.execute(e.name, op, addr, e.mode);
+    return this.cycles - start;
+  }
+
+  // ---- バスとスタック ----
+
+  read(addr) { return this.bus.read(addr & 0xffff) & 0xff; }
+  write(addr, v) { this.bus.write(addr & 0xffff, v & 0xff); }
+  read16(addr) { return this.read(addr) | (this.read((addr + 1) & 0xffff) << 8); }
+  readZP16(zp) { return this.read(zp & 0xff) | (this.read((zp + 1) & 0xff) << 8); }
+
+  push(v) { this.write(0x100 | this.s, v); this.s = (this.s - 1) & 0xff; }
+  pull() { this.s = (this.s + 1) & 0xff; return this.read(0x100 | this.s); }
+
+  fetch() { const v = this.read(this.pc); this.pc = (this.pc + 1) & 0xffff; return v; }
+  fetch16() { const v = this.read16(this.pc); this.pc = (this.pc + 2) & 0xffff; return v; }
+
+  interrupt(vector, isBrk) {
+    this.push(this.pc >> 8);
+    this.push(this.pc & 0xff);
+    this.push(isBrk ? (this.p | F_B | F_U) : ((this.p & ~F_B) | F_U));
+    this.p = (this.p | F_I) & ~F_D; // 65C02は割り込みでDフラグをクリアする
+    this.pc = this.read16(vector);
+    if (!isBrk) this.cycles += 7;
+  }
+
+  // ---- アドレッシング ----
+
+  resolve(mode) {
+    switch (mode) {
+      case 'imp': case 'acc': case 'n1':
+        return -1;
+      case 'imm': case 'rel': case 'zpr': {
+        const a = this.pc;
+        if (mode === 'imm') this.pc = (this.pc + 1) & 0xffff;
+        return a; // rel/zprはオペランドの位置だけ返し、命令側で読む
+      }
+      case 'n2': this.pc = (this.pc + 1) & 0xffff; return -1;
+      case 'n3': this.pc = (this.pc + 2) & 0xffff; return -1;
+      case 'zp': return this.fetch();
+      case 'zpx': return (this.fetch() + this.x) & 0xff;
+      case 'zpy': return (this.fetch() + this.y) & 0xff;
+      case 'abs': return this.fetch16();
+      case 'abx': return this.indexed(this.fetch16(), this.x);
+      case 'aby': return this.indexed(this.fetch16(), this.y);
+      case 'ind': return this.read16(this.fetch16()); // 65C02はページ境界のバグなし
+      case 'aix': return this.read16((this.fetch16() + this.x) & 0xffff);
+      case 'izx': return this.readZP16(this.fetch() + this.x);
+      case 'izy': return this.indexed(this.readZP16(this.fetch()), this.y);
+      case 'izp': return this.readZP16(this.fetch());
+      default: throw new Error(`unknown addressing mode: ${mode}`);
+    }
+  }
+
+  indexed(base, index) {
+    const a = (base + index) & 0xffff;
+    if ((a & 0xff00) !== (base & 0xff00)) this._crossed = true;
+    return a;
+  }
+
+  // ---- フラグ ----
+
+  setNZ(v) {
+    this.p = (this.p & ~(F_N | F_Z)) | (v & 0x80) | (v === 0 ? F_Z : 0);
+    return v;
+  }
+
+  setFlag(flag, on) { if (on) this.p |= flag; else this.p &= ~flag; }
+
+  // ---- 演算 ----
+
+  adc(v) {
+    const a = this.a, c = this.p & F_C;
+    if (this.p & F_D) {
+      this.cycles += 1; // 65C02は10進モードで1サイクル追加
+      let lo = (a & 0x0f) + (v & 0x0f) + c;
+      if (lo >= 0x0a) lo = ((lo + 0x06) & 0x0f) + 0x10;
+      let r = (a & 0xf0) + (v & 0xf0) + lo;
+      const signed = (a & 0xf0) - ((a & 0x80) << 1) + (v & 0xf0) - ((v & 0x80) << 1) + lo;
+      this.setFlag(F_V, signed < -128 || signed > 127);
+      if (r >= 0xa0) r += 0x60;
+      this.setFlag(F_C, r >= 0x100);
+      this.a = this.setNZ(r & 0xff);
+    } else {
+      const r = a + v + c;
+      this.setFlag(F_V, (~(a ^ v) & (a ^ r) & 0x80) !== 0);
+      this.setFlag(F_C, r > 0xff);
+      this.a = this.setNZ(r & 0xff);
+    }
+  }
+
+  sbc(v) {
+    if (this.p & F_D) {
+      this.cycles += 1;
+      const a = this.a, c = this.p & F_C;
+      const bin = a - v + c - 1;
+      // C と V は2進の減算と同じ
+      this.setFlag(F_V, ((a ^ v) & (a ^ bin) & 0x80) !== 0);
+      this.setFlag(F_C, bin >= 0);
+      const lo = (a & 0x0f) - (v & 0x0f) + c - 1;
+      let r = bin;
+      if (r < 0) r -= 0x60;
+      if (lo < 0) r -= 0x06;
+      this.a = this.setNZ(r & 0xff);
+    } else {
+      this.adc(v ^ 0xff);
+    }
+  }
+
+  compare(reg, v) {
+    const r = reg - v;
+    this.setFlag(F_C, r >= 0);
+    this.setNZ(r & 0xff);
+  }
+
+  branch(cond) {
+    const off = this.fetch();
+    if (!cond) return;
+    const target = (this.pc + ((off ^ 0x80) - 0x80)) & 0xffff;
+    this.cycles += 1;
+    if ((target & 0xff00) !== (this.pc & 0xff00)) this.cycles += 1;
+    this.pc = target;
+  }
+
+  // 読み書き命令(シフト、INC/DEC)。addr < 0 ならアキュムレーター
+  rmw(addr, fn) {
+    if (addr < 0) { this.a = fn(this.a); return; }
+    this.write(addr, fn(this.read(addr)));
+  }
+
+  asl(v) { this.setFlag(F_C, v & 0x80); return this.setNZ((v << 1) & 0xff); }
+  lsr(v) { this.setFlag(F_C, v & 0x01); return this.setNZ(v >> 1); }
+  rol(v) { const c = this.p & F_C; this.setFlag(F_C, v & 0x80); return this.setNZ(((v << 1) | c) & 0xff); }
+  ror(v) { const c = this.p & F_C; this.setFlag(F_C, v & 0x01); return this.setNZ((v >> 1) | (c << 7)); }
+
+  // ---- 命令の実行 ----
+
+  execute(name, op, addr, mode) {
+    switch (name) {
+      // 転送
+      case 'LDA': this.a = this.setNZ(this.read(addr)); break;
+      case 'LDX': this.x = this.setNZ(this.read(addr)); break;
+      case 'LDY': this.y = this.setNZ(this.read(addr)); break;
+      case 'STA': this.write(addr, this.a); break;
+      case 'STX': this.write(addr, this.x); break;
+      case 'STY': this.write(addr, this.y); break;
+      case 'STZ': this.write(addr, 0); break;
+      case 'TAX': this.x = this.setNZ(this.a); break;
+      case 'TAY': this.y = this.setNZ(this.a); break;
+      case 'TXA': this.a = this.setNZ(this.x); break;
+      case 'TYA': this.a = this.setNZ(this.y); break;
+      case 'TSX': this.x = this.setNZ(this.s); break;
+      case 'TXS': this.s = this.x; break;
+
+      // スタック
+      case 'PHA': this.push(this.a); break;
+      case 'PHX': this.push(this.x); break;
+      case 'PHY': this.push(this.y); break;
+      case 'PHP': this.push(this.p | F_B | F_U); break;
+      case 'PLA': this.a = this.setNZ(this.pull()); break;
+      case 'PLX': this.x = this.setNZ(this.pull()); break;
+      case 'PLY': this.y = this.setNZ(this.pull()); break;
+      case 'PLP': this.p = this.pull() | F_B | F_U; break;
+
+      // 算術、論理
+      case 'ADC': this.adc(this.read(addr)); break;
+      case 'SBC': this.sbc(this.read(addr)); break;
+      case 'AND': this.a = this.setNZ(this.a & this.read(addr)); break;
+      case 'ORA': this.a = this.setNZ(this.a | this.read(addr)); break;
+      case 'EOR': this.a = this.setNZ(this.a ^ this.read(addr)); break;
+      case 'CMP': this.compare(this.a, this.read(addr)); break;
+      case 'CPX': this.compare(this.x, this.read(addr)); break;
+      case 'CPY': this.compare(this.y, this.read(addr)); break;
+      case 'BIT': {
+        const v = this.read(addr);
+        this.setFlag(F_Z, (this.a & v) === 0);
+        if (mode !== 'imm') this.p = (this.p & ~(F_N | F_V)) | (v & (F_N | F_V));
+        break;
+      }
+
+      // 読み書き
+      case 'ASL': this.rmw(addr, (v) => this.asl(v)); break;
+      case 'LSR': this.rmw(addr, (v) => this.lsr(v)); break;
+      case 'ROL': this.rmw(addr, (v) => this.rol(v)); break;
+      case 'ROR': this.rmw(addr, (v) => this.ror(v)); break;
+      case 'INC': this.rmw(addr, (v) => this.setNZ((v + 1) & 0xff)); break;
+      case 'DEC': this.rmw(addr, (v) => this.setNZ((v - 1) & 0xff)); break;
+      case 'INX': this.x = this.setNZ((this.x + 1) & 0xff); break;
+      case 'INY': this.y = this.setNZ((this.y + 1) & 0xff); break;
+      case 'DEX': this.x = this.setNZ((this.x - 1) & 0xff); break;
+      case 'DEY': this.y = this.setNZ((this.y - 1) & 0xff); break;
+      case 'TSB': {
+        const v = this.read(addr);
+        this.setFlag(F_Z, (this.a & v) === 0);
+        this.write(addr, v | this.a);
+        break;
+      }
+      case 'TRB': {
+        const v = this.read(addr);
+        this.setFlag(F_Z, (this.a & v) === 0);
+        this.write(addr, v & ~this.a);
+        break;
+      }
+      case 'RMB': this.write(addr, this.read(addr) & ~(1 << ((op >> 4) & 7))); break;
+      case 'SMB': this.write(addr, this.read(addr) | (1 << ((op >> 4) & 7))); break;
+
+      // 分岐
+      case 'BPL': this.branch(!(this.p & F_N)); break;
+      case 'BMI': this.branch(this.p & F_N); break;
+      case 'BVC': this.branch(!(this.p & F_V)); break;
+      case 'BVS': this.branch(this.p & F_V); break;
+      case 'BCC': this.branch(!(this.p & F_C)); break;
+      case 'BCS': this.branch(this.p & F_C); break;
+      case 'BNE': this.branch(!(this.p & F_Z)); break;
+      case 'BEQ': this.branch(this.p & F_Z); break;
+      case 'BRA': this.branch(true); break;
+      case 'BBR': case 'BBS': {
+        const v = this.read(this.fetch());
+        const bit = (v >> ((op >> 4) & 7)) & 1;
+        this.branch(name === 'BBS' ? bit : !bit);
+        break;
+      }
+
+      // ジャンプ、サブルーチン、割り込み
+      case 'JMP': this.pc = addr; break;
+      case 'JSR': {
+        const ret = (this.pc - 1) & 0xffff;
+        this.push(ret >> 8);
+        this.push(ret & 0xff);
+        this.pc = addr;
+        break;
+      }
+      case 'RTS': this.pc = ((this.pull() | (this.pull() << 8)) + 1) & 0xffff; break;
+      case 'RTI':
+        this.p = this.pull() | F_B | F_U;
+        this.pc = this.pull() | (this.pull() << 8);
+        break;
+      case 'BRK':
+        this.pc = (this.pc + 1) & 0xffff; // BRKは2バイト命令扱い(署名バイトを飛ばす)
+        this.interrupt(0xfffe, true);
+        break;
+
+      // フラグ
+      case 'CLC': this.p &= ~F_C; break;
+      case 'SEC': this.p |= F_C; break;
+      case 'CLI': this.p &= ~F_I; break;
+      case 'SEI': this.p |= F_I; break;
+      case 'CLD': this.p &= ~F_D; break;
+      case 'SED': this.p |= F_D; break;
+      case 'CLV': this.p &= ~F_V; break;
+
+      // その他
+      case 'NOP': break;
+      case 'WAI': this.waiting = true; break;
+      case 'STP': this.stopped = true; break;
+
+      default: throw new Error(`unimplemented: ${name}`);
+    }
+  }
+}
+
+return { F_C, F_Z, F_I, F_D, F_B, F_U, F_V, F_N, OPCODES, CPU65C02 };
+})();
+
+// ===== src/bus.js =====
+__modules['src/bus.js'] = (() => {
+// PX-65 エミュレーター: メモリマップとI/O
+//
+//   $0000-$7FFF  RAM 32KB(VRAMは $0400-$057F)
+//   $8000-$80FF  I/O
+//   $8100-$9FFF  未使用(読むと $FF)
+//   $A000-$FFFF  ROM 24KB(書き込みは無視)
+
+const RAM_SIZE = 0x8000;
+const ROM_BASE = 0xa000;
+const ROM_SIZE = 0x6000;
+const IO_BASE = 0x8000;
+const IO_END = 0x80ff;
+const VRAM_BASE = 0x0400;
+
+const LCD_WIDTH = 96;
+const LCD_HEIGHT = 32;
+
+// I/Oレジスタのアドレス
+const KEY_ROW = 0x8000;
+const KEY_COL = 0x8001;
+const LCD_ANN = 0x8002;
+const LCD_CTRL = 0x8003;
+const TIMER_CTRL = 0x8010;
+const BEEP = 0x8020;
+const TAPE_DATA = 0x8030;
+const TAPE_CTRL = 0x8031;
+
+// TAPE_CTRL に書くコマンドと、読み出したときのビット
+const TAPE_STOP = 0x00;
+const TAPE_PLAY = 0x01;    // 先頭に戻して読み出しを始める
+const TAPE_RECORD = 0x02;  // テープを消して書き込みを始める
+const TAPE_APPEND = 0x03;  // 中身を残したまま、最後から書き込みを始める
+const TAPE_CANCEL = 0x04;  // 録音をやめ、録音を始める前の中身に戻す
+const TAPE_ST_PLAY = 0x01; // 再生中
+const TAPE_ST_REC = 0x02;  // 録音中
+const TAPE_ST_FULL = 0x20; // 録音中で、テープがいっぱいで書けなかったバイトがある
+const TAPE_ST_EOT = 0x40;  // 再生中で、もう読むデータがない
+const TAPE_ST_READY = 0x80; // 再生中で、TAPE_DATA から次のバイトを読める
+const TAPE_MAX = 0x10000;   // テープの最大バイト数
+
+const CPU_HZ = 1_000_000;
+const TIMER_PERIOD = 15_625; // 64Hz
+
+class Bus {
+  constructor() {
+    this.ram = new Uint8Array(RAM_SIZE);
+    this.rom = new Uint8Array(ROM_SIZE).fill(0xff);
+    this.keys = new Uint8Array(8); // 行ごとに、押されている列のビットが1
+    this.cycles = 0;               // バスが知っている累計サイクル数(ブザーの記録に使う)
+    this.beepEvents = [];          // { cycle, level } ブザー出力が変化したサイクル
+    this.tape = new Uint8Array(0); // 仮想テープの中身
+    this.tapeMode = TAPE_STOP;
+    this.tapePos = 0;              // 再生中に次に読む位置
+    this.tapeRec = [];             // 録音中のデータ
+    this.tapeFull = false;         // 録音中に、いっぱいで書けなかったバイトがある
+    this.onTapeRecorded = null;    // 録音を止めたときに呼ぶ関数(中身を受け取る)
+    this.resetIO();
+  }
+
+  // I/Oレジスタを電源投入時の状態(すべて0)に戻す
+  resetIO() {
+    this.keyRow = 0;
+    this.lcdAnn = 0;
+    this.lcdCtrl = 0;
+    this.timerEnable = false;
+    this.timerPending = false;
+    this.timerCount = 0;
+    this.beepLevel = 0;
+    this.stopTape();
+  }
+
+  clearRAM() { this.ram.fill(0); }
+
+  // ROMを読み込む。24KBより小さいときは末尾にそろえる(ベクタが $FFFA-$FFFF に来るように)
+  loadROM(data) {
+    if (data.length > ROM_SIZE) throw new Error(`ROM is too large: ${data.length} bytes (max ${ROM_SIZE})`);
+    this.rom.fill(0xff);
+    this.rom.set(data, ROM_SIZE - data.length);
+  }
+
+  // IRQ線の状態
+  get irq() { return this.timerEnable && this.timerPending; }
+
+  // CPUが進んだサイクル数を受け取り、タイマーを進める
+  tick(cycles) {
+    this.cycles += cycles;
+    this.timerCount += cycles;
+    while (this.timerCount >= TIMER_PERIOD) {
+      this.timerCount -= TIMER_PERIOD;
+      this.timerPending = true;
+    }
+  }
+
+  read(addr) {
+    if (addr < RAM_SIZE) return this.ram[addr];
+    if (addr >= ROM_BASE) return this.rom[addr - ROM_BASE];
+    if (addr <= IO_END) return this.readIO(addr);
+    return 0xff;
+  }
+
+  write(addr, v) {
+    if (addr < RAM_SIZE) { this.ram[addr] = v; return; }
+    if (addr >= IO_BASE && addr <= IO_END) this.writeIO(addr, v);
+    // ROMと未使用領域への書き込みは無視
+  }
+
+  readIO(addr) {
+    switch (addr) {
+      case KEY_ROW: return this.keyRow;
+      case KEY_COL: {
+        // 選ばれた(ビットが0の)行すべてについて、押されている列を0にする
+        let cols = 0xff;
+        for (let row = 0; row < 8; row++) {
+          if (!(this.keyRow & (1 << row))) cols &= ~this.keys[row];
+        }
+        return cols & 0xff;
+      }
+      case LCD_ANN: return this.lcdAnn;
+      case LCD_CTRL: return this.lcdCtrl;
+      case TIMER_CTRL: return (this.timerEnable ? 0x01 : 0) | (this.timerPending ? 0x80 : 0);
+      case BEEP: return 0xff;      // 書き込み専用
+      case TAPE_DATA: {
+        // 読むと次のバイトに進む
+        if (this.tapeMode !== TAPE_PLAY || this.tapePos >= this.tape.length) return 0xff;
+        return this.tape[this.tapePos++];
+      }
+      case TAPE_CTRL: return this.tapeStatus();
+      default: return 0xff;
+    }
+  }
+
+  writeIO(addr, v) {
+    switch (addr) {
+      case KEY_ROW: this.keyRow = v; break;
+      case LCD_ANN: this.lcdAnn = v; break;
+      case LCD_CTRL: this.lcdCtrl = v; break;
+      case TIMER_CTRL:
+        this.timerEnable = (v & 0x01) !== 0;
+        if (v & 0x80) this.timerPending = false;
+        break;
+      case BEEP: {
+        const level = v & 0x01;
+        if (level !== this.beepLevel) {
+          this.beepLevel = level;
+          this.beepEvents.push({ cycle: this.cycles, level });
+        }
+        break;
+      }
+      case TAPE_DATA:
+        if (this.tapeMode === TAPE_RECORD) {
+          if (this.tapeRec.length < TAPE_MAX) this.tapeRec.push(v);
+          else this.tapeFull = true;
+        }
+        break;
+      case TAPE_CTRL:
+        if (v === TAPE_CANCEL) {        // 録音した分を捨てる(テープの中身は録音前のまま)
+          this.tapeRec = [];
+          this.tapeMode = TAPE_STOP;
+          this.tapePos = 0;
+          this.tapeFull = false;
+          break;
+        }
+        this.stopTape();
+        switch (v & 0x03) {
+          case TAPE_RECORD:
+            this.tapeMode = TAPE_RECORD;
+            this.tapeRec = [];
+            break;
+          case TAPE_APPEND:
+            this.tapeMode = TAPE_RECORD;
+            this.tapeRec = Array.from(this.tape);
+            break;
+          case TAPE_PLAY:
+            this.tapeMode = TAPE_PLAY;
+            this.tapePos = 0;
+            break;
+        }
+        break;
+      // KEY_COL(読み出し専用)と未定義アドレスへの書き込みは無視
+    }
+  }
+
+  // 読み出しと同じ値を返すが、何も変えない(デバッガ用)。TAPE_DATA を読んでもテープが進まない
+  peek(addr) {
+    if (addr === TAPE_DATA) {
+      return this.tapeMode === TAPE_PLAY && this.tapePos < this.tape.length ? this.tape[this.tapePos] : 0xff;
+    }
+    return this.read(addr);
+  }
+
+  tapeStatus() {
+    if (this.tapeMode === TAPE_RECORD) return TAPE_ST_REC | (this.tapeFull ? TAPE_ST_FULL : 0);
+    if (this.tapeMode !== TAPE_PLAY) return 0;
+    return TAPE_ST_PLAY | (this.tapePos < this.tape.length ? TAPE_ST_READY : TAPE_ST_EOT);
+  }
+
+  // テープを止める。録音中だったら、録音した内容をテープの中身にする
+  stopTape() {
+    if (this.tapeMode === TAPE_RECORD) {
+      this.tape = Uint8Array.from(this.tapeRec);
+      this.tapeRec = [];
+      this.tapeMode = TAPE_STOP;
+      this.onTapeRecorded?.(this.tape);
+    }
+    this.tapeMode = TAPE_STOP;
+    this.tapePos = 0;
+    this.tapeFull = false;
+  }
+
+  // ---- 外部(キーボードUIなど)から使う ----
+
+  // テープを入れ替える(止めてから)。空の配列なら取り出したのと同じ
+  insertTape(bytes) {
+    if (bytes.length > TAPE_MAX) throw new Error(`tape is too large: ${bytes.length} bytes (max ${TAPE_MAX})`);
+    this.tapeMode = TAPE_STOP;
+    this.tapeRec = [];
+    this.tapePos = 0;
+    this.tapeFull = false;
+    this.tape = Uint8Array.from(bytes);
+  }
+
+  setKey(row, col, pressed) {
+    if (pressed) this.keys[row] |= 1 << col;
+    else this.keys[row] &= ~(1 << col);
+  }
+
+  get displayOn() { return (this.lcdCtrl & 0x01) !== 0; }
+  get contrast() { return (this.lcdCtrl >> 4) & 0x0f; }
+
+  // 画面のドットを 96×32 の配列(1なら点灯)で返す。表示オフならすべて0
+  renderLCD(out = new Uint8Array(LCD_WIDTH * LCD_HEIGHT)) {
+    if (!this.displayOn) { out.fill(0); return out; }
+    for (let page = 0; page < 4; page++) {
+      for (let x = 0; x < LCD_WIDTH; x++) {
+        const b = this.ram[VRAM_BASE + page * LCD_WIDTH + x];
+        for (let bit = 0; bit < 8; bit++) {
+          out[(page * 8 + bit) * LCD_WIDTH + x] = (b >> bit) & 1;
+        }
+      }
+    }
+    return out;
+  }
+}
+
+return { RAM_SIZE, ROM_BASE, ROM_SIZE, IO_BASE, IO_END, VRAM_BASE, LCD_WIDTH, LCD_HEIGHT, KEY_ROW, KEY_COL, LCD_ANN, LCD_CTRL, TIMER_CTRL, BEEP, TAPE_DATA, TAPE_CTRL, TAPE_STOP, TAPE_PLAY, TAPE_RECORD, TAPE_APPEND, TAPE_CANCEL, TAPE_ST_PLAY, TAPE_ST_REC, TAPE_ST_FULL, TAPE_ST_EOT, TAPE_ST_READY, TAPE_MAX, CPU_HZ, TIMER_PERIOD, Bus };
+})();
+
+// ===== src/machine.js =====
+__modules['src/machine.js'] = (() => {
+// PX-65 エミュレーター: 本体(CPUとバスをつなぐ)
+//
+//   const m = new Machine();
+//   m.loadROM(romBytes);
+//   m.powerOn();
+//   m.runFrame();          // 1/60秒ぶん実行
+//   m.bus.renderLCD();     // 画面のドット
+
+const { CPU65C02 } = __modules['src/cpu65c02.js'];
+const { Bus, CPU_HZ } = __modules['src/bus.js'];
+const FPS = 60;
+
+class Machine {
+  constructor() {
+    this.bus = new Bus();
+    this.cpu = new CPU65C02(this.bus);
+    this.cycleDebt = 0; // 1フレームの端数(16,666.67サイクル)を持ち越す
+  }
+
+  loadROM(data) { this.bus.loadROM(data); }
+
+  // 電源投入。keepRAM が true ならRAMの内容を残す
+  powerOn({ keepRAM = false } = {}) {
+    if (!keepRAM) this.bus.clearRAM();
+    this.reset();
+  }
+
+  // リセット(RAMはそのまま)
+  reset() {
+    this.bus.resetIO();
+    this.cpu.reset();
+    this.cpu.setIRQ(false);
+  }
+
+  // BREAKキー
+  pressBreak() { this.cpu.nmi(); }
+
+  // 1命令を実行し、かかったサイクル数を返す
+  step() {
+    const c = this.cpu.step();
+    this.bus.tick(c);
+    this.cpu.setIRQ(this.bus.irq);
+    return c;
+  }
+
+  // 指定したサイクル数だけ実行する(命令の途中では止まらないので少し超えることがある)
+  runCycles(cycles) {
+    let done = 0;
+    while (done < cycles) done += this.step();
+    return done;
+  }
+
+  // 1フレーム(1/60秒)ぶん実行し、実行したサイクル数を返す。
+  // breakpoints(アドレスのSet)を渡すと、PCがそのどれかに来たところで止まり、breakHit が true になる
+  runFrame(breakpoints = null) {
+    this.cycleDebt += CPU_HZ / FPS;
+    this.breakHit = false;
+    let done = 0;
+    while (done < this.cycleDebt) {
+      if (breakpoints && breakpoints.has(this.cpu.pc)) {
+        this.breakHit = true;
+        this.cycleDebt = 0;
+        return done;
+      }
+      done += this.step();
+    }
+    this.cycleDebt -= done;
+    return done;
+  }
+
+  // ---- 状態の保存と復元(JSONにできる形) ----
+
+  saveState() {
+    const { cpu, bus } = this;
+    return {
+      version: 2, // 2: ROMが24KB、I/Oが $8000 になった
+      cpu: { a: cpu.a, x: cpu.x, y: cpu.y, s: cpu.s, p: cpu.p, pc: cpu.pc, cycles: cpu.cycles,
+        nmiPending: cpu.nmiPending, waiting: cpu.waiting, stopped: cpu.stopped },
+      bus: { keyRow: bus.keyRow, lcdAnn: bus.lcdAnn, lcdCtrl: bus.lcdCtrl, timerEnable: bus.timerEnable,
+        timerPending: bus.timerPending, timerCount: bus.timerCount, beepLevel: bus.beepLevel, cycles: bus.cycles },
+      ram: toBase64(bus.ram),
+      rom: toBase64(bus.rom),
+      tape: { data: toBase64(bus.tape), mode: bus.tapeMode, pos: bus.tapePos, rec: toBase64(Uint8Array.from(bus.tapeRec)), full: bus.tapeFull },
+    };
+  }
+
+  loadState(state) {
+    if (!state || state.version !== 2) throw new Error('unsupported state');
+    Object.assign(this.cpu, state.cpu);
+    Object.assign(this.bus, state.bus);
+    this.bus.ram.set(fromBase64(state.ram));
+    this.bus.rom.set(fromBase64(state.rom));
+    this.bus.beepEvents.length = 0;
+    // テープは後から加えたので、ないときは空のテープにする
+    const tape = state.tape;
+    this.bus.tape = tape ? fromBase64(tape.data) : new Uint8Array(0);
+    this.bus.tapeMode = tape ? tape.mode : 0;
+    this.bus.tapePos = tape ? tape.pos : 0;
+    this.bus.tapeRec = tape ? Array.from(fromBase64(tape.rec)) : [];
+    this.bus.tapeFull = tape?.full ?? false;
+    this.cpu.setIRQ(this.bus.irq);
+    this.cycleDebt = 0;
+  }
+}
+
+function toBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function fromBase64(text) {
+  const s = atob(text);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+return { FPS, Machine, toBase64, fromBase64 };
+})();
+
+// ===== src/disasm.js =====
+__modules['src/disasm.js'] = (() => {
+// PX-65 エミュレーター: 逆アセンブラ(デバッガ用)
+//
+//   const { text, length } = disassemble(read, addr);
+//   read(addr) はバスの読み出し。I/Oの読み出しに副作用がないので、そのまま使える
+
+const { OPCODES } = __modules['src/cpu65c02.js'];
+const hex2 = (v) => '$' + v.toString(16).toUpperCase().padStart(2, '0');
+const hex4 = (v) => '$' + v.toString(16).toUpperCase().padStart(4, '0');
+
+const LENGTH = { imp: 1, acc: 1, n1: 1, imm: 2, zp: 2, zpx: 2, zpy: 2, izx: 2, izy: 2, izp: 2,
+  rel: 2, n2: 2, abs: 3, abx: 3, aby: 3, ind: 3, aix: 3, zpr: 3, n3: 3 };
+
+function disassemble(read, addr) {
+  const op = read(addr);
+  const e = OPCODES[op];
+  const b1 = read((addr + 1) & 0xffff);
+  const b2 = read((addr + 2) & 0xffff);
+  const w = b1 | (b2 << 8);
+  const length = LENGTH[e.mode];
+  const bitOp = ['RMB', 'SMB', 'BBR', 'BBS'].includes(e.name);
+  const name = bitOp ? e.name + ((op >> 4) & 7) : e.name;
+  const rel = (off, next) => hex4((next + ((off ^ 0x80) - 0x80)) & 0xffff);
+
+  let operand;
+  switch (e.mode) {
+    case 'imp': case 'n1': operand = ''; break;
+    case 'acc': operand = 'A'; break;
+    case 'imm': operand = '#' + hex2(b1); break;
+    case 'zp': operand = hex2(b1); break;
+    case 'zpx': operand = hex2(b1) + ',X'; break;
+    case 'zpy': operand = hex2(b1) + ',Y'; break;
+    case 'izx': operand = `(${hex2(b1)},X)`; break;
+    case 'izy': operand = `(${hex2(b1)}),Y`; break;
+    case 'izp': operand = `(${hex2(b1)})`; break;
+    case 'abs': operand = hex4(w); break;
+    case 'abx': operand = hex4(w) + ',X'; break;
+    case 'aby': operand = hex4(w) + ',Y'; break;
+    case 'ind': operand = `(${hex4(w)})`; break;
+    case 'aix': operand = `(${hex4(w)},X)`; break;
+    case 'rel': operand = rel(b1, (addr + 2) & 0xffff); break;
+    case 'zpr': operand = `${hex2(b1)},${rel(b2, (addr + 3) & 0xffff)}`; break;
+    case 'n2': operand = hex2(b1); break;
+    case 'n3': operand = hex4(w); break;
+  }
+  const bytes = [op, b1, b2].slice(0, length);
+  return { text: operand ? `${name} ${operand}` : name, length, bytes };
+}
+
+return { disassemble };
+})();
+
+// ===== web/i18n.js =====
+__modules['web/i18n.js'] = (() => {
+// PX-65 エミュレーター: UIの文言(日本語と英語)
+//
+// HTML(web/index.html)では {{キー}} と書き、ビルド時に置き換わる。
+// スクリプト(web/ui.js)では t('キー', { 名前: 値 }) で取り出す。文言の中の {名前} が値に置き換わる。
+// 言語を足すときは、ja と同じキーをすべて持つオブジェクトを加え、tools/build.js の LANGS に追加する。
+
+const STRINGS = {
+  ja: {
+    // ---- HTML ----
+    htmlLang: 'ja',
+    locale: 'ja-JP',
+    unitLabel: 'PX-65 本体',
+    lcdLabel: '液晶画面',
+    reset: 'リセット',
+    clearRam: 'RAMを消去',
+    loadRom: 'ROMを読み込む',
+    useBuiltinRom: '内蔵ROMに戻す',
+    insertTape: 'テープを入れる',
+    saveTape: 'テープを保存',
+    ejectTape: 'テープを取り出す',
+    speed: '速度',
+    sound: '音',
+    vibration: 'キーを押したら振動',
+    oneShotShift: 'SHIFTは次の1文字だけ',
+    keepRam: '電源を切ってもRAMを残す',
+    saveState: '状態を保存',
+    loadState: '状態を読み込む',
+    howtoPc: '画面のキーをクリックするか、PCのキーボードで入力できます。'
+      + '<kbd>Enter</kbd> がRET、<kbd>Backspace</kbd> がDEL、<kbd>Esc</kbd> がBREAKです。'
+      + '音はページを一度クリックすると鳴るようになります。',
+    howtoTouch: '「123」のキーで数字キーに、「ABC」で文字キーに切り替わります。'
+      + '音は画面を一度タップすると鳴るようになります。iPhoneはマナーモードのときは音が出ません。',
+    debugger: 'デバッガ',
+    step: '1命令進める',
+    stepFrame: '1フレーム進める',
+    registers: 'レジスタ',
+    disassembly: '逆アセンブル',
+    breakpoint: 'ブレークポイント',
+    add: '追加',
+    clearAll: 'すべて解除',
+    memory: 'メモリ',
+    startAddress: '先頭アドレス',
+
+    // ---- ボタンの状態 ----
+    powerOn: '電源オン',
+    powerOff: '電源オフ',
+    pause: '一時停止',
+    run: '実行',
+    showDebugger: 'デバッガを表示',
+    hideDebugger: 'デバッガを隠す',
+    toNumberKeys: '数字キーに切り替え',
+    toLetterKeys: '文字キーに切り替え',
+
+    // ---- デバッガの状態 ----
+    stateOff: '電源オフ',
+    stateStopped: 'STPで停止',
+    statePaused: '一時停止',
+    statePausedWai: '一時停止(WAIで待機中)',
+    stateRunning: '実行中',
+    stateRunningWai: '実行中(WAIで待機)',
+    cyclesTotal: '累計 {n} サイクル',
+    breakpointList: '設定中: {list}',
+
+    // ---- 状態表示のメッセージ ----
+    builtinRom: '内蔵ROM(BASIC)',
+    loadedRom: '読み込んだROM',
+    started: '{rom}で起動しました。',
+    startedRestored: '{rom}で起動しました。前回のRAMを復元しています。',
+    romTooLarge: 'ROMが大きすぎます({size}バイト)。24,576バイト以下にしてください。',
+    romLoaded: '{name}({size}バイト)を読み込んで起動しました。',
+    romNotRemembered: '次回はこのROMを覚えていません(ブラウザの保存領域が使えません)。',
+    poweredOff: '電源を切りました。',
+    resetDone: 'リセットしました。',
+    clearRamConfirm: 'RAMを消去して起動し直します。プログラムと変数はすべて消えます(テープは消えません)。よろしいですか?',
+    ramCleared: 'RAMを消去して、{rom}で起動しました。',
+    breakHit: 'ブレークポイント ${addr} で止まりました。',
+    breakpointInvalid: 'ブレークポイントは16進数4桁までで入力してください(例: C079)。',
+    stateSaved: '状態を保存しました。',
+    stateSaveFailed: '保存できませんでした。ブラウザの保存領域が使えません。',
+    stateMissing: '保存した状態がありません。先に「状態を保存」を押してください。',
+    stateLoaded: '保存した状態を読み込みました。',
+    stateBroken: '保存した状態を読み込めませんでした。データが壊れています。',
+    stateOld: '保存した状態は古い仕様(ROM 16KB、I/Oが $BF00)のものなので読み込めません。',
+    tapeInfo: 'テープ: {name}({size}バイト)',
+    tapeNone: 'テープ: なし',
+    tapeDefaultName: 'tape.tap',
+    tapeInserted: '{name}({size}バイト)をテープに入れました。BASICでは FILES で中身を見て、LOAD "名前" で読み込めます。',
+    tapeTooLarge: 'テープのファイルが大きすぎます({size}バイト)。65,536バイト以下にしてください。',
+    tapeRecorded: 'テープに{size}バイト記録しました。「テープを保存」でファイルにできます。',
+    tapeSaved: 'テープを {name} に保存しました。',
+    tapeEmpty: 'テープに何も記録されていません。',
+    tapeEjected: 'テープを取り出しました。',
+    tapeNotRemembered: '次回はこのテープを覚えていません(ブラウザの保存領域が使えません)。',
+
+    // ---- キーの読み上げ名 ----
+    keyLeft: '左',
+    keyRight: '右',
+    keyUp: '上',
+    keyDown: '下',
+    keySpace: 'スペース',
+    keyMinus: 'マイナス',
+    keyPlus: 'プラス',
+    keyEquals: 'イコール',
+    keyComma: 'カンマ',
+    keyPeriod: 'ピリオド',
+    keyTimes: 'かける',
+    keyDivide: 'わる',
+  },
+
+  en: {
+    // ---- HTML ----
+    htmlLang: 'en',
+    locale: 'en-US',
+    unitLabel: 'PX-65 unit',
+    lcdLabel: 'LCD screen',
+    reset: 'Reset',
+    clearRam: 'Clear RAM',
+    loadRom: 'Load ROM',
+    useBuiltinRom: 'Use built-in ROM',
+    insertTape: 'Insert tape',
+    saveTape: 'Save tape',
+    ejectTape: 'Eject tape',
+    speed: 'Speed',
+    sound: 'Sound',
+    vibration: 'Vibrate on key press',
+    oneShotShift: 'SHIFT for the next key only',
+    keepRam: 'Keep RAM when powered off',
+    saveState: 'Save state',
+    loadState: 'Load state',
+    howtoPc: 'Click the keys on screen or type on your keyboard. '
+      + '<kbd>Enter</kbd> is RET, <kbd>Backspace</kbd> is DEL, and <kbd>Esc</kbd> is BREAK. '
+      + 'Sound starts after you click the page once.',
+    howtoTouch: 'Tap 123 for number keys and ABC for letter keys. '
+      + 'Sound starts after you tap the screen once. iPhones make no sound in silent mode.',
+    debugger: 'Debugger',
+    step: 'Step',
+    stepFrame: 'Step frame',
+    registers: 'Registers',
+    disassembly: 'Disassembly',
+    breakpoint: 'Breakpoint',
+    add: 'Add',
+    clearAll: 'Clear all',
+    memory: 'Memory',
+    startAddress: 'Start address',
+
+    // ---- ボタンの状態 ----
+    powerOn: 'Power: on',
+    powerOff: 'Power: off',
+    pause: 'Pause',
+    run: 'Run',
+    showDebugger: 'Show debugger',
+    hideDebugger: 'Hide debugger',
+    toNumberKeys: 'Switch to number keys',
+    toLetterKeys: 'Switch to letter keys',
+
+    // ---- デバッガの状態 ----
+    stateOff: 'Powered off',
+    stateStopped: 'Stopped by STP',
+    statePaused: 'Paused',
+    statePausedWai: 'Paused (waiting in WAI)',
+    stateRunning: 'Running',
+    stateRunningWai: 'Running (waiting in WAI)',
+    cyclesTotal: '{n} cycles total',
+    breakpointList: 'Set: {list}',
+
+    // ---- 状態表示のメッセージ ----
+    builtinRom: 'the built-in ROM (BASIC)',
+    loadedRom: 'the loaded ROM',
+    started: 'Started with {rom}.',
+    startedRestored: 'Started with {rom}. RAM was restored from last time.',
+    romTooLarge: 'This ROM is too large ({size} bytes). Use a ROM of 24,576 bytes or less.',
+    romLoaded: 'Loaded {name} ({size} bytes) and started it.',
+    romNotRemembered: ' This ROM won’t be remembered next time because browser storage isn’t available.',
+    poweredOff: 'Powered off.',
+    resetDone: 'Reset the machine.',
+    clearRamConfirm: 'Clear RAM and start again? The program and all variables will be erased (the tape is kept).',
+    ramCleared: 'Cleared RAM and started with {rom}.',
+    breakHit: 'Stopped at breakpoint ${addr}.',
+    breakpointInvalid: 'Enter a breakpoint as up to 4 hex digits, like C079.',
+    stateSaved: 'Saved the state.',
+    stateSaveFailed: 'Couldn’t save. Browser storage isn’t available.',
+    stateMissing: 'No saved state yet. Press Save state first.',
+    stateLoaded: 'Loaded the saved state.',
+    stateBroken: 'Couldn’t load the saved state. The data is damaged.',
+    stateOld: 'This saved state is from the old design (16KB ROM, I/O at $BF00) and can’t be loaded.',
+    tapeInfo: 'Tape: {name} ({size} bytes)',
+    tapeNone: 'Tape: none',
+    tapeDefaultName: 'tape.tap',
+    tapeInserted: 'Inserted {name} ({size} bytes). In BASIC, FILES lists it and LOAD "NAME" loads a program.',
+    tapeTooLarge: 'This tape file is too large ({size} bytes). Use a file of 65,536 bytes or less.',
+    tapeRecorded: 'Recorded {size} bytes on the tape. Press Save tape to keep it as a file.',
+    tapeSaved: 'Saved the tape as {name}.',
+    tapeEmpty: 'Nothing is recorded on the tape.',
+    tapeEjected: 'Ejected the tape.',
+    tapeNotRemembered: ' This tape won’t be remembered next time because browser storage isn’t available.',
+
+    // ---- キーの読み上げ名 ----
+    keyLeft: 'Left',
+    keyRight: 'Right',
+    keyUp: 'Up',
+    keyDown: 'Down',
+    keySpace: 'Space',
+    keyMinus: 'Minus',
+    keyPlus: 'Plus',
+    keyEquals: 'Equals',
+    keyComma: 'Comma',
+    keyPeriod: 'Period',
+    keyTimes: 'Times',
+    keyDivide: 'Divide',
+  },
+};
+
+return { STRINGS };
+})();
+
+// ===== web/keyqueue.js =====
+__modules['web/keyqueue.js'] = (() => {
+// 押す・離すをエミュレーターの時間に合わせてキーマトリクスに反映する
+//
+// ROMはキーボードを1/64秒(15,625サイクル)ごとに読む。速く打たれても読み落とさないように、
+// 押す・離すをいったん列に入れ、エミュレーターの時間で次を守って反映する:
+//   押したキーは2回読まれるまで離さない。離したキーは1回読まれるまで押さない。順番は変えない
+// PCで記号を打ったときは、その記号に必要な SHIFT の状態を、そのキーを押したときに合わせる
+
+// キーマトリクス(仕様書の表と同じ)。null は未使用
+const KEY_MATRIX = [
+  ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'],
+  ['I', 'J', 'K', 'L', 'M', 'N', 'O', 'P'],
+  ['Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X'],
+  ['Y', 'Z', 'SPACE', 'RET', 'SHIFT', 'DEL', ',', '.'],
+  ['0', '1', '2', '3', '4', '5', '6', '7'],
+  ['8', '9', '+', '-', '*', '/', '=', null],
+  ['LEFT', 'RIGHT', 'UP', 'DOWN', null, null, null, null],
+];
+// キー名 -> [行, 列]
+const KEY_POSITION = new Map();
+KEY_MATRIX.forEach((row, r) => row.forEach((name, c) => { if (name) KEY_POSITION.set(name, [r, c]); }));
+
+const SCAN_CYCLES = 15625;
+const HOLD_CYCLES = SCAN_CYCLES * 2 + 500;
+const GAP_CYCLES = SCAN_CYCLES + 500;
+
+class KeyQueue {
+  // bus: setKey(row, col, on) と cycles を持つもの。position: キー名 -> [行, 列]
+  constructor(bus, position) {
+    this.bus = bus;
+    this.position = position;
+    this.queue = [];             // { down, name, shift }(shift: true/false = 記号に必要な SHIFT、null = 指定なし)
+    this.downAt = new Map();     // キー名 -> マトリクスで押したときのサイクル数
+    this.upAt = new Map();       // キー名 -> マトリクスで離したときのサイクル数
+    this.shiftHeld = false;      // SHIFT キーが押されているか
+    this.forced = null;          // 最後に押した記号のキーが必要とする SHIFT(null なら shiftHeld に従う)
+    this.forcedKey = null;
+  }
+
+  // wait: 時間を守るか(エミュレーターが止まっているときは待たない)
+  push(down, name, shift, wait) {
+    this.queue.push({ down, name, shift });
+    this.process(wait);
+  }
+
+  // 列の先頭から、条件を満たしたものをマトリクスに反映する(フレームごとにも呼ぶ)
+  process(wait) {
+    const now = this.bus.cycles;
+    while (this.queue.length) {
+      const ev = this.queue[0];
+      if (ev.down) {
+        if (wait && this.tooSoon(this.upAt, ev.name, now, GAP_CYCLES)) break;
+        this.setMatrix(ev.name, true);
+        this.downAt.set(ev.name, now);
+        if (ev.name !== 'SHIFT') { this.forced = ev.shift; this.forcedKey = ev.name; }
+      } else {
+        if (wait && this.tooSoon(this.downAt, ev.name, now, HOLD_CYCLES)) break;
+        this.setMatrix(ev.name, false);
+        this.upAt.set(ev.name, now);
+        if (this.forcedKey === ev.name) { this.forced = null; this.forcedKey = null; }
+      }
+      this.queue.shift();
+    }
+    this.applyShift();
+  }
+
+  // times に記録した時刻から、まだ cycles たっていないか。
+  // 記録が今より後なら(状態を読み込んで時間が戻ったなど)、その記録は使わない
+  tooSoon(times, name, now, cycles) {
+    const t = times.get(name);
+    if (t === undefined) return false;
+    if (t > now) { times.delete(name); return false; }
+    return now - t < cycles;
+  }
+
+  setMatrix(name, on) {
+    if (name === 'SHIFT') { this.shiftHeld = on; return; }
+    const pos = this.position.get(name);
+    if (pos) this.bus.setKey(pos[0], pos[1], on);
+  }
+
+  applyShift() {
+    const pos = this.position.get('SHIFT');
+    this.bus.setKey(pos[0], pos[1], this.forced !== null ? this.forced : this.shiftHeld);
+  }
+
+  // 列を捨て、すべてのキーを離す
+  releaseAll() {
+    this.queue.length = 0;
+    for (const name of this.position.keys()) this.setMatrix(name, false);
+    this.shiftHeld = false;
+    this.forced = null;
+    this.forcedKey = null;
+    this.applyShift();
+  }
+
+  // releaseAll に加えて、押した・離した時刻も忘れる(状態の読み込みで時間が変わったとき)
+  reset() {
+    this.releaseAll();
+    this.downAt.clear();
+    this.upAt.clear();
+  }
+}
+
+return { KEY_MATRIX, KEY_POSITION, SCAN_CYCLES, HOLD_CYCLES, GAP_CYCLES, KeyQueue };
+})();
+
+// ===== web/ui.js =====
+__modules['web/ui.js'] = (() => {
+// PX-65 エミュレーター: ブラウザのUI
+//
+// tools/build.js がこのファイルと src/ のモジュールを1つのHTMLにまとめる。
+// まとめるときに import 文は取り除かれ、内蔵ROMが BUILTIN_ROM_BASE64 として埋め込まれる。
+
+const { Machine, FPS, toBase64, fromBase64 } = __modules['src/machine.js'];
+const { LCD_WIDTH, LCD_HEIGHT, CPU_HZ, ROM_SIZE, TAPE_MAX } = __modules['src/bus.js'];
+const { F_N, F_V, F_B, F_D, F_I, F_Z, F_C } = __modules['src/cpu65c02.js'];
+const { disassemble } = __modules['src/disasm.js'];
+const { STRINGS } = __modules['web/i18n.js'];
+const { KeyQueue, KEY_POSITION } = __modules['web/keyqueue.js'];
+/* global BUILTIN_ROM_BASE64, UI_LANG */
+
+// UIの言語はビルド時に決まる(UI_LANG)。文言は web/i18n.js にある
+const TEXT = STRINGS[UI_LANG] ?? STRINGS.ja;
+function t(key, vars = {}) {
+  const s = TEXT[key];
+  if (s === undefined) throw new Error(`missing text: ${key}`);
+  return s.replace(/\{(\w+)\}/g, (_, name) => String(vars[name]));
+}
+const num = (n) => n.toLocaleString(TEXT.locale);
+
+const $ = (id) => document.getElementById(id);
+const hex2 = (v) => v.toString(16).toUpperCase().padStart(2, '0');
+const hex4 = (v) => v.toString(16).toUpperCase().padStart(4, '0');
+
+// ---------------- 保存領域(使えない環境でも動くように) ----------------
+
+const store = {
+  get(key) { try { return localStorage.getItem('px65.' + key); } catch { return null; } },
+  set(key, value) {
+    try { localStorage.setItem('px65.' + key, value); return true; } catch { return false; }
+  },
+  remove(key) { try { localStorage.removeItem('px65.' + key); } catch { /* 何もしない */ } },
+};
+
+// ---------------- 本体 ----------------
+
+const machine = new Machine();
+const { bus, cpu } = machine;
+
+let powered = true;
+let running = true;       // false なら一時停止(デバッガ)
+let speed = 1;
+let soundOn = true;
+let vibrateOn = store.get('vibrate') !== '0'; // 初めて開いたときはオン
+// 画面の SHIFT キー: オンなら1回押すと次の1文字だけ効く(ワンショット)。オフなら押している間だけ効く。
+// 初めて開いたときはオン(マウスでは2つのキーを同時に押せないため)
+let oneShotShift = store.get('oneShotShift') !== '0';
+let shiftLatched = false;     // ワンショットの SHIFT が効いている(次のキーを待っている)
+// 電源を切ってもRAMを残す: 初めて開いたときはオン(オフにした人は '0' が記録されている)
+let keepRam = store.get('keepRam') !== '0';
+let romName = t('builtinRom');
+
+function setStatus(text, isError = false) {
+  const el = $('status');
+  el.textContent = text;
+  el.classList.toggle('error', isError);
+}
+
+function loadRomBytes(bytes, name) {
+  if (bytes.length > ROM_SIZE) {
+    setStatus(t('romTooLarge', { size: num(bytes.length) }), true);
+    return false;
+  }
+  machine.loadROM(bytes);
+  romName = name;
+  return true;
+}
+
+function startUp() {
+  const saved = store.get('rom');
+  const savedName = store.get('romName');
+  if (saved) {
+    try {
+      loadRomBytes(fromBase64(saved), savedName || t('loadedRom'));
+    } catch {
+      loadRomBytes(fromBase64(BUILTIN_ROM_BASE64), romName);
+    }
+  } else {
+    loadRomBytes(fromBase64(BUILTIN_ROM_BASE64), romName);
+  }
+
+  const savedRam = keepRam ? store.get('ram') : null;
+  if (savedRam) {
+    try { bus.ram.set(fromBase64(savedRam)); } catch { /* 壊れていたら空のRAMで始める */ }
+    machine.powerOn({ keepRAM: true });
+    setStatus(t('startedRestored', { rom: romName }));
+  } else {
+    machine.powerOn();
+    setStatus(t('started', { rom: romName }));
+  }
+}
+
+// ---------------- 仮想テープ ----------------
+
+let tapeName = store.get('tapeName') || t('tapeDefaultName');
+
+function updateTapeInfo() {
+  const size = bus.tape.length;
+  $('tapeInfo').textContent = size ? t('tapeInfo', { name: tapeName, size: num(size) }) : t('tapeNone');
+  $('tapeSave').disabled = size === 0;
+  $('tapeEject').disabled = size === 0;
+}
+
+// テープの中身をブラウザに覚えておく(次に開いたときも同じテープが入っている)
+function rememberTape() {
+  if (bus.tape.length === 0) {
+    store.remove('tape');
+    store.remove('tapeName');
+    return true;
+  }
+  return store.set('tape', toBase64(bus.tape)) && store.set('tapeName', tapeName);
+}
+
+function restoreTape() {
+  const saved = store.get('tape');
+  if (!saved) return;
+  try { bus.insertTape(fromBase64(saved)); } catch { store.remove('tape'); }
+}
+
+// ROMが録音を止めたとき
+bus.onTapeRecorded = (bytes) => {
+  const ok = rememberTape();
+  updateTapeInfo();
+  setStatus(t('tapeRecorded', { size: num(bytes.length) }) + (ok ? '' : t('tapeNotRemembered')));
+};
+
+$('tapeInsert').addEventListener('click', () => $('tapeFile').click());
+$('tapeFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (bytes.length > TAPE_MAX) {
+    setStatus(t('tapeTooLarge', { size: num(bytes.length) }), true);
+    return;
+  }
+  bus.insertTape(bytes);
+  tapeName = file.name;
+  const ok = rememberTape();
+  updateTapeInfo();
+  setStatus(t('tapeInserted', { name: file.name, size: num(bytes.length) }) + (ok ? '' : t('tapeNotRemembered')));
+});
+
+// ファイル名を選べるブラウザでは保存ダイアログを出し、それ以外はダウンロードする
+$('tapeSave').addEventListener('click', async () => {
+  const bytes = bus.tape;
+  if (bytes.length === 0) { setStatus(t('tapeEmpty'), true); return; }
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: tapeName,
+        types: [{ description: 'PX-65 tape', accept: { 'application/octet-stream': ['.tap'] } }],
+      });
+      const w = await handle.createWritable();
+      await w.write(bytes);
+      await w.close();
+      tapeName = handle.name;
+      rememberTape();
+      updateTapeInfo();
+      setStatus(t('tapeSaved', { name: handle.name }));
+      return;
+    } catch (err) {
+      if (err && err.name === 'AbortError') return; // キャンセルした
+      // ダイアログが使えない環境(file:// など)では下のダウンロードにする
+    }
+  }
+  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = tapeName;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  setStatus(t('tapeSaved', { name: tapeName }));
+});
+
+$('tapeEject').addEventListener('click', () => {
+  bus.insertTape(new Uint8Array(0));
+  tapeName = t('tapeDefaultName');
+  rememberTape();
+  updateTapeInfo();
+  setStatus(t('tapeEjected'));
+});
+
+function saveRamIfNeeded() {
+  if (keepRam) store.set('ram', toBase64(bus.ram));
+}
+
+// ---------------- キーボード ----------------
+
+const KEY_FACE = { LEFT: '←', RIGHT: '→', UP: '↑', DOWN: '↓', SPACE: '', '*': '×', '/': '÷', '-': '−' };
+const KEY_LABEL = { LEFT: t('keyLeft'), RIGHT: t('keyRight'), UP: t('keyUp'), DOWN: t('keyDown'),
+  SPACE: t('keySpace'), BRK: 'BREAK', RET: 'RET', DEL: 'DEL', SHIFT: 'SHIFT', '*': t('keyTimes'),
+  '/': t('keyDivide'), '-': t('keyMinus'), '+': t('keyPlus'), '=': t('keyEquals'), ',': t('keyComma'),
+  '.': t('keyPeriod') };
+
+// SHIFTと押すと出る文字(ROMのキー表と同じ)。キーの右上に小さく表示する
+const SHIFT_LEGEND = { '1': '!', '2': '"', '3': '#', '4': '$', '5': '%', '6': '&', '7': "'", '8': '(',
+  '9': ')', '0': '@', ',': '<', '.': '>', '/': '?', '-': '_', '*': ':', '+': ';', '=': '^' };
+
+const keyButtons = new Map(); // キー名 -> ボタン
+const holders = new Map();    // キー名 -> 押している入力元の数(画面のキーとPCのキーボード)
+const pointers = new Map();   // pointerId -> キー名(画面のキーを押している指やマウス。1本ずつ離すため)
+
+// ---- マトリクスへの反映(web/keyqueue.js) ----
+const keyQueue = new KeyQueue(bus, KEY_POSITION);
+const queueKey = (down, name, shift) => keyQueue.push(down, name, shift, powered && running);
+const processKeys = () => keyQueue.process(powered && running); // 止まっているときは待たない
+
+// shift: PCで記号を打ったときに必要な SHIFT の状態(画面のキーでは null)
+function pressKey(name, shift = null) {
+  ensureAudio();
+  const n = (holders.get(name) || 0) + 1;
+  holders.set(name, n);
+  keyButtons.get(name)?.classList.add('down');
+  if (n > 1) return;
+  if (name === 'BRK') {
+    if (powered) machine.pressBreak();
+    return;
+  }
+  queueKey(true, name, shift);
+}
+
+function releaseKey(name, shift = null) {
+  const n = (holders.get(name) || 0) - 1;
+  if (n > 0) { holders.set(name, n); return; }
+  holders.delete(name);
+  keyButtons.get(name)?.classList.remove('down');
+  if (name === 'BRK') return;
+  queueKey(false, name, shift);
+  // ワンショットの SHIFT は、次のキーを離したら一緒に離す
+  if (shiftLatched && name !== 'SHIFT') unlatchShift();
+}
+
+// 画面の SHIFT キーを押したとき(ワンショット): 1回目で効かせ、もう一度押したら取り消す
+function toggleShiftLatch() {
+  if (shiftLatched) { unlatchShift(); return; }
+  shiftLatched = true;
+  pressKey('SHIFT');
+}
+
+function unlatchShift() {
+  if (!shiftLatched) return;
+  shiftLatched = false;
+  releaseKey('SHIFT');
+}
+
+function releaseAllKeys() {
+  shiftLatched = false;
+  keyQueue.releaseAll();
+  for (const name of holders.keys()) keyButtons.get(name)?.classList.remove('down');
+  holders.clear();
+  pcKeys.clear();
+  pointers.clear();
+}
+
+function makeKey(name, cls = '') {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'key ' + cls;
+  b.textContent = KEY_FACE[name] ?? name;
+  if (SHIFT_LEGEND[name]) {
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = SHIFT_LEGEND[name];
+    sub.setAttribute('aria-hidden', 'true');
+    b.append(sub);
+  }
+  b.setAttribute('aria-label', KEY_LABEL[name] ?? name);
+  b.tabIndex = -1; // フォーカス移動の邪魔にならないように。PCのキーボードで入力できる
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'touch') buzz();
+    if (name === 'SHIFT' && oneShotShift) { toggleShiftLatch(); return; } // 離したときは何もしない
+    if (pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, name);
+    pressKey(name);
+  });
+  // pointerup の後に lostpointercapture も来るので、同じ指で2回離さないようにする
+  const up = (e) => {
+    if (pointers.get(e.pointerId) !== name) return;
+    pointers.delete(e.pointerId);
+    releaseKey(name);
+  };
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+  b.addEventListener('lostpointercapture', up);
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+  keyButtons.set(name, b);
+  return b;
+}
+
+// 振動に対応した端末(主にAndroid)で、キーを押した手応えを返す
+function buzz() {
+  if (!vibrateOn) return;
+  try { navigator.vibrate?.(8); } catch { /* 対応していない */ }
+}
+
+// 振動の設定は、振動できるタッチ端末(主にAndroid)だけに表示する。
+// iPhoneのSafariは navigator.vibrate を持たないので、押しても何も起きない設定は出さない
+const canVibrate = typeof navigator.vibrate === 'function'
+  && window.matchMedia('(pointer: coarse)').matches;
+
+// 文字キーと数字キーの切り替え(スマートフォンだけで表示される)
+function makeModeKey() {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'key mode mobile-only';
+  b.tabIndex = -1;
+  const keys = $('keys');
+  const update = () => {
+    const alpha = keys.dataset.tab === 'alpha';
+    b.textContent = alpha ? '123' : 'ABC';
+    b.setAttribute('aria-label', alpha ? t('toNumberKeys') : t('toLetterKeys'));
+  };
+  b.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    if (e.pointerType === 'touch') buzz();
+    keys.dataset.tab = keys.dataset.tab === 'alpha' ? 'num' : 'alpha';
+    update();
+  });
+  b.addEventListener('contextmenu', (e) => e.preventDefault());
+  update();
+  return b;
+}
+
+function buildKeyboard() {
+  const fkeys = $('fkeys');
+  fkeys.append(makeKey('BRK', 'brk'), makeKey('DEL', 'fn'));
+  const arrows = document.createElement('div');
+  arrows.className = 'arrows';
+  arrows.append(makeKey('UP', 'fn'), makeKey('DOWN', 'fn'), makeKey('LEFT', 'fn'), makeKey('RIGHT', 'fn'));
+  fkeys.append(arrows);
+
+  const alpha = $('alpha');
+  const rows = [
+    [...'QWERTYUIOP'],
+    [...'ASDFGHJKL'],
+    [...'ZXCVBNM,'],
+  ];
+  for (const keys of rows) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    for (const k of keys) row.append(makeKey(k));
+    alpha.append(row);
+  }
+  $('bottom').append(makeModeKey(), makeKey('SHIFT', 'fn wide'), makeKey('SPACE', 'space'),
+    makeKey('RET', 'fn wide'));
+
+  const pad = $('pad');
+  for (const k of ['7', '8', '9', '/', '4', '5', '6', '*', '1', '2', '3', '-', '0', '.', '=', '+']) {
+    pad.append(makeKey(k, /[0-9.]/.test(k) ? 'num' : 'op'));
+  }
+}
+
+// PCのキーボード。まず物理キー(code)で探し、なければ入力された文字(key)で探す
+const CODE_MAP = {
+  Space: 'SPACE', Enter: 'RET', NumpadEnter: 'RET', ShiftLeft: 'SHIFT', ShiftRight: 'SHIFT',
+  Backspace: 'DEL', Delete: 'DEL', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', ArrowUp: 'UP', ArrowDown: 'DOWN',
+  Escape: 'BRK', NumpadAdd: '+', NumpadSubtract: '-', NumpadMultiply: '*', NumpadDivide: '/',
+  NumpadDecimal: '.', NumpadEqual: '=',
+};
+for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') CODE_MAP['Key' + c] = c;
+for (let d = 0; d <= 9; d++) { CODE_MAP['Digit' + d] = String(d); CODE_MAP['Numpad' + d] = String(d); }
+// 記号 -> [本体のキー, SHIFTを押すか]。PCのキーボードの配列によらず、打った記号がそのまま入る
+const CHAR_MAP = {};
+for (const k of ['+', '-', '*', '/', '=', ',', '.']) CHAR_MAP[k] = [k, false];
+for (const [k, c] of Object.entries(SHIFT_LEGEND)) CHAR_MAP[c] = [k, true];
+
+const pcKeys = new Map(); // code -> { name, shift }(離したときに同じキーを離すため)
+
+function isTyping(target) {
+  return target instanceof HTMLInputElement || target instanceof HTMLSelectElement
+    || target instanceof HTMLTextAreaElement;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
+  // 記号は文字で決める(キーボードの配列によって位置が違うため)。それ以外は物理キーで決める
+  const sym = CHAR_MAP[e.key];
+  const name = sym ? sym[0] : CODE_MAP[e.code];
+  if (!name) return;
+  e.preventDefault();
+  if (e.repeat || pcKeys.has(e.code)) return;
+  const shift = sym ? sym[1] : null;
+  pcKeys.set(e.code, { name, shift });
+  pressKey(name, shift);
+});
+
+document.addEventListener('keyup', (e) => {
+  const k = pcKeys.get(e.code);
+  if (!k) return;
+  pcKeys.delete(e.code);
+  releaseKey(k.name, k.shift);
+});
+
+window.addEventListener('blur', releaseAllKeys);
+
+// ---------------- 液晶 ----------------
+
+const DOT = 5; // 1ドットの大きさ(すき間1pxを含む)
+const lcdCtx = $('lcd').getContext('2d');
+const lcdPixels = new Uint8Array(LCD_WIDTH * LCD_HEIGHT);
+const annSpans = [...$('ann').children];
+let lastLcdKey = '';
+
+function drawLCD() {
+  const on = powered && bus.displayOn;
+  if (on) bus.renderLCD(lcdPixels); else lcdPixels.fill(0);
+  const contrast = on ? bus.contrast : 8;
+  const key = on + ':' + contrast + ':' + lcdPixels.join('');
+  if (key !== lastLcdKey) {
+    lastLcdKey = key;
+    const ctx = lcdCtx;
+    ctx.fillStyle = '#a7b893';
+    ctx.fillRect(0, 0, LCD_WIDTH * DOT, LCD_HEIGHT * DOT);
+    // 消えているドットもうっすら見える(液晶らしさ)
+    ctx.fillStyle = '#9cad88';
+    for (let y = 0; y < LCD_HEIGHT; y++) {
+      for (let x = 0; x < LCD_WIDTH; x++) ctx.fillRect(x * DOT, y * DOT, DOT - 1, DOT - 1);
+    }
+    // コントラスト0〜15を濃さに対応させる(8が標準)
+    const alpha = Math.min(1, 0.2 + contrast * 0.1);
+    ctx.fillStyle = `rgba(34, 43, 30, ${alpha})`;
+    for (let y = 0; y < LCD_HEIGHT; y++) {
+      for (let x = 0; x < LCD_WIDTH; x++) {
+        if (lcdPixels[y * LCD_WIDTH + x]) ctx.fillRect(x * DOT, y * DOT, DOT - 1, DOT - 1);
+      }
+    }
+  }
+  const ann = powered ? bus.lcdAnn : 0;
+  annSpans.forEach((s, i) => s.classList.toggle('on', on && ((ann >> i) & 1) === 1));
+}
+
+// ---------------- 音 ----------------
+
+let audio = null;
+let audioOut = null;
+let nextTime = 0;
+let sampleCarry = 0;
+let beepLevel = 0;
+
+function ensureAudio() {
+  if (!soundOn) return;
+  if (!audio) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audio = new AC();
+    const highpass = audio.createBiquadFilter(); // 直流分を取り除く
+    highpass.type = 'highpass';
+    highpass.frequency.value = 30;
+    const gain = audio.createGain();
+    gain.gain.value = 0.2;
+    highpass.connect(gain).connect(audio.destination);
+    audioOut = highpass;
+  }
+  if (audio.state === 'suspended') audio.resume();
+}
+
+// 1フレームぶんのブザーの記録を音にして再生予約する
+function pushAudio(startCycle, cycles) {
+  const events = bus.beepEvents;
+  const playable = audio && audio.state === 'running' && soundOn && speed === 1;
+  if (!playable || (events.length === 0 && beepLevel === 0)) {
+    if (events.length) beepLevel = events[events.length - 1].level;
+    events.length = 0;
+    sampleCarry = 0;
+    return;
+  }
+  const rate = audio.sampleRate;
+  const exact = cycles * rate / CPU_HZ + sampleCarry;
+  const n = Math.floor(exact);
+  sampleCarry = exact - n;
+  if (n <= 0) { events.length = 0; return; }
+
+  const buffer = audio.createBuffer(1, n, rate);
+  const data = buffer.getChannelData(0);
+  let ei = 0;
+  for (let i = 0; i < n; i++) {
+    const c = startCycle + i * CPU_HZ / rate;
+    while (ei < events.length && events[ei].cycle <= c) beepLevel = events[ei++].level;
+    data[i] = beepLevel ? 1 : 0;
+  }
+  while (ei < events.length) beepLevel = events[ei++].level;
+  events.length = 0;
+
+  const now = audio.currentTime;
+  if (nextTime < now + 0.02) nextTime = now + 0.05;  // 途切れていたら少し先から
+  if (nextTime > now + 0.3) return;                   // 遅れすぎたら捨てる
+  const src = audio.createBufferSource();
+  src.buffer = buffer;
+  src.connect(audioOut);
+  src.start(nextTime);
+  nextTime += n / rate;
+}
+
+// ---------------- 実行ループ ----------------
+
+const breakpoints = new Set();
+let lastTime = performance.now();
+let backlog = 0;
+let framesSinceDebug = 0;
+let speedWindowStart = performance.now();
+let speedWindowCycles = 0;
+let measuredMHz = 0;
+
+function runOneFrame() {
+  const start = bus.cycles;
+  const done = machine.runFrame(breakpoints.size ? breakpoints : null);
+  speedWindowCycles += done;
+  pushAudio(start, done);
+  if (machine.breakHit) {
+    setRunning(false);
+    setStatus(t('breakHit', { addr: hex4(cpu.pc) }));
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(now - lastTime, 100);
+  lastTime = now;
+  if (powered && running) {
+    backlog += dt * speed;
+    const frameMs = 1000 / FPS;
+    let frames = 0;
+    while (backlog >= frameMs && running) {
+      backlog -= frameMs;
+      processKeys();
+      runOneFrame();
+      if (++frames >= 40) { backlog = 0; break; }
+    }
+    framesSinceDebug += frames;
+    if (framesSinceDebug >= 10) { framesSinceDebug = 0; updateDebug(); }
+  }
+  if (now - speedWindowStart >= 1000) {
+    measuredMHz = speedWindowCycles / ((now - speedWindowStart) * 1000);
+    speedWindowStart = now;
+    speedWindowCycles = 0;
+  }
+  drawLCD();
+  requestAnimationFrame(loop);
+}
+
+// ---------------- 操作 ----------------
+
+function setPowered(on) {
+  powered = on;
+  const b = $('power');
+  b.setAttribute('aria-pressed', String(on));
+  b.textContent = on ? t('powerOn') : t('powerOff');
+  if (on) {
+    machine.powerOn({ keepRAM: keepRam });
+    setRunning(true);
+    setStatus(t('started', { rom: romName }));
+  } else {
+    saveRamIfNeeded();
+    if (!keepRam) bus.clearRAM();
+    setStatus(t('poweredOff'));
+  }
+  updateDebug();
+}
+
+function setRunning(on) {
+  running = on;
+  backlog = 0;
+  $('dbgRun').textContent = on ? t('pause') : t('run');
+  $('dbgStep').disabled = on;
+  $('dbgFrame').disabled = on;
+  updateDebug();
+}
+
+$('power').addEventListener('click', () => { ensureAudio(); setPowered(!powered); });
+
+$('reset').addEventListener('click', () => {
+  ensureAudio();
+  if (!powered) { setPowered(true); return; }
+  machine.reset();
+  setStatus(t('resetDone'));
+  updateDebug();
+});
+
+// RAMを消去して起動し直す(コールドスタート)。RAMを残す設定でも、プログラムと変数を全部消したいときに使う
+$('clearRam').addEventListener('click', () => {
+  if (!window.confirm(t('clearRamConfirm'))) return;
+  ensureAudio();
+  store.remove('ram');
+  bus.clearRAM();
+  setPowered(true);
+  setStatus(t('ramCleared', { rom: romName }));
+});
+
+$('romLoad').addEventListener('click', () => $('romFile').click());
+$('romFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  if (!loadRomBytes(bytes, file.name)) return;
+  const saved = store.set('rom', toBase64(bytes)) && store.set('romName', file.name);
+  setPowered(true);
+  setStatus(t('romLoaded', { name: file.name, size: num(bytes.length) })
+    + (saved ? '' : t('romNotRemembered')));
+});
+
+$('romBuiltin').addEventListener('click', () => {
+  store.remove('rom');
+  store.remove('romName');
+  loadRomBytes(fromBase64(BUILTIN_ROM_BASE64), t('builtinRom'));
+  setPowered(true);
+});
+
+$('speed').addEventListener('change', (e) => { speed = Number(e.target.value); });
+
+$('sound').addEventListener('change', (e) => {
+  soundOn = e.target.checked;
+  if (soundOn) ensureAudio();
+});
+
+$('vibrateOption').hidden = !canVibrate;
+$('vibrate').checked = vibrateOn;
+$('oneShotShift').checked = oneShotShift;
+$('oneShotShift').addEventListener('change', (e) => {
+  oneShotShift = e.target.checked;
+  store.set('oneShotShift', oneShotShift ? '1' : '0');
+  unlatchShift(); // 切り替えたときに効いたままにしない
+});
+$('vibrate').addEventListener('change', (e) => {
+  vibrateOn = e.target.checked;
+  store.set('vibrate', vibrateOn ? '1' : '0');
+  if (vibrateOn) buzz(); // オンにしたことが手で分かるように一度だけ振動させる
+});
+
+$('keepRam').checked = keepRam;
+$('keepRam').addEventListener('change', (e) => {
+  keepRam = e.target.checked;
+  store.set('keepRam', keepRam ? '1' : '0');
+  if (!keepRam) store.remove('ram');
+  else saveRamIfNeeded();
+});
+
+$('stateSave').addEventListener('click', () => {
+  // 内蔵ROMの名前は言語によって違うので、名前ではなく印を保存する
+  const name = romName === t('builtinRom') ? null : romName;
+  const ok = store.set('state', JSON.stringify({ romName: name, machine: machine.saveState() }));
+  setStatus(ok ? t('stateSaved') : t('stateSaveFailed'), !ok);
+});
+
+$('stateLoad').addEventListener('click', () => {
+  const text = store.get('state');
+  if (!text) { setStatus(t('stateMissing'), true); return; }
+  try {
+    const s = JSON.parse(text);
+    machine.loadState(s.machine);
+    releaseAllKeys();             // 時間が戻るので、キーの列と押した・離した時刻を捨てる
+    keyQueue.reset();
+    romName = s.romName || t('builtinRom');
+    rememberTape();
+    updateTapeInfo();
+    if (!powered) {
+      powered = true;
+      $('power').setAttribute('aria-pressed', 'true');
+      $('power').textContent = t('powerOn');
+    }
+    setStatus(t('stateLoaded'));
+  } catch {
+    let old = false;
+    try { old = JSON.parse(text).machine.version === 1; } catch { /* 壊れている */ }
+    setStatus(t(old ? 'stateOld' : 'stateBroken'), true);
+  }
+  updateDebug();
+});
+
+window.addEventListener('pagehide', saveRamIfNeeded);
+document.addEventListener('visibilitychange', () => { if (document.hidden) saveRamIfNeeded(); });
+
+// ---------------- デバッガ ----------------
+
+$('dbgRun').addEventListener('click', () => {
+  if (!powered) return;
+  if (running) { setRunning(false); return; }
+  // ブレークポイントの上から再開するときは、まず1命令進めて同じ場所で止まらないようにする
+  if (breakpoints.has(cpu.pc)) machine.step();
+  setRunning(true);
+  setStatus('');
+});
+
+$('dbgStep').addEventListener('click', () => {
+  if (!powered || running) return;
+  const start = bus.cycles;
+  const c = machine.step();
+  pushAudio(start, c);
+  updateDebug();
+});
+
+$('dbgFrame').addEventListener('click', () => {
+  if (!powered || running) return;
+  if (breakpoints.has(cpu.pc)) machine.step();
+  runOneFrame();
+  updateDebug();
+});
+
+function parseHex(text) {
+  const t = text.trim().replace(/^(\$|0x)/i, '');
+  if (!/^[0-9a-f]{1,4}$/i.test(t)) return null;
+  return parseInt(t, 16);
+}
+
+$('bpAdd').addEventListener('click', () => {
+  const a = parseHex($('bpAddr').value);
+  if (a === null) { setStatus(t('breakpointInvalid'), true); return; }
+  breakpoints.add(a);
+  $('bpAddr').value = '';
+  updateDebug();
+});
+$('bpAddr').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('bpAdd').click(); });
+$('bpClear').addEventListener('click', () => { breakpoints.clear(); updateDebug(); });
+$('memAddr').addEventListener('input', updateDebug);
+
+$('dbgToggle').addEventListener('click', () => {
+  const show = !document.body.classList.contains('show-debug');
+  document.body.classList.toggle('show-debug', show);
+  $('dbgToggle').textContent = show ? t('hideDebugger') : t('showDebugger');
+  $('dbgToggle').setAttribute('aria-expanded', String(show));
+  if (show) {
+    updateDebug();
+    $('debug').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+});
+
+const debugPanel = $('debug');
+const debugVisible = () => debugPanel.offsetParent !== null;
+
+function updateDebug() {
+  if (!debugVisible()) return;
+  const state = !powered ? t('stateOff')
+    : cpu.stopped ? t('stateStopped')
+      : !running ? (cpu.waiting ? t('statePausedWai') : t('statePaused'))
+        : cpu.waiting ? t('stateRunningWai') : t('stateRunning');
+  const mhz = powered && running ? `${UI_LANG === 'ja' ? '、' : ', '}${measuredMHz.toFixed(2)} MHz` : '';
+  $('dbgState').innerHTML = `<b>${state}</b>${mhz}`;
+
+  const regs = [['PC', hex4(cpu.pc)], ['A', hex2(cpu.a)], ['X', hex2(cpu.x)], ['Y', hex2(cpu.y)],
+    ['S', hex2(cpu.s)], ['P', hex2(cpu.p)]];
+  $('regs').innerHTML = regs.map(([n, v]) => `<div><span>${n}</span>${v}</div>`).join('');
+
+  const flags = [['N', F_N], ['V', F_V], ['-', 0x20], ['B', F_B], ['D', F_D], ['I', F_I], ['Z', F_Z], ['C', F_C]];
+  $('flags').innerHTML = flags.map(([n, f]) => `<span class="${cpu.p & f ? '' : 'off'}">${n}</span>`).join('');
+  $('cycles').textContent = t('cyclesTotal', { n: num(cpu.cycles) });
+
+  const read = (a) => bus.peek(a); // TAPE_DATA を読んでもテープが進まないように
+  const lines = [];
+  let addr = cpu.pc;
+  for (let i = 0; i < 10; i++) {
+    const d = disassemble(read, addr);
+    const bytes = d.bytes.map(hex2).join(' ').padEnd(9);
+    const mark = breakpoints.has(addr) ? '●' : ' ';
+    const line = `${mark}${hex4(addr)}  ${bytes} ${d.text}`;
+    const cls = [i === 0 ? 'cur' : '', breakpoints.has(addr) ? 'bp' : ''].join(' ').trim();
+    lines.push(cls ? `<span class="${cls}">${line}</span>` : line);
+    addr = (addr + d.length) & 0xffff;
+  }
+  $('code').innerHTML = lines.join('\n');
+
+  $('bps').textContent = breakpoints.size
+    ? t('breakpointList', { list: [...breakpoints].sort((a, b) => a - b).map((a) => '$' + hex4(a)).join(', ') })
+    : '';
+
+  const start = (parseHex($('memAddr').value) ?? 0x0400) & 0xfff8;
+  const rows = [];
+  for (let r = 0; r < 8; r++) {
+    const base = (start + r * 8) & 0xffff;
+    const bytes = [];
+    let text = '';
+    for (let i = 0; i < 8; i++) {
+      const v = bus.peek((base + i) & 0xffff);
+      bytes.push(hex2(v));
+      text += v >= 0x20 && v < 0x7f ? String.fromCharCode(v) : '.';
+    }
+    rows.push(`${hex4(base)}  ${bytes.join(' ')}  ${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}`);
+  }
+  $('mem').innerHTML = rows.join('\n');
+}
+
+// ---------------- 起動 ----------------
+
+document.addEventListener('pointerdown', ensureAudio, { once: false });
+buildKeyboard();
+restoreTape();
+updateTapeInfo();
+startUp();
+setRunning(true);
+requestAnimationFrame(loop);
+
+return {  };
+})();
+
+})();
+</script>
+</body>
+</html>

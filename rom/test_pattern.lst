@@ -1,0 +1,241 @@
+                    ; PX-65 テスト用ROM
+                    ;
+                    ; 画面に枠、文字「PX-65」、三角波を描き、タイマー割り込みでカーソルを0.5秒ごとに点滅させる。
+                    ; 押されているキーを左端の8×8ドットに表示し、キーを押すとビープを鳴らす。
+                    ;
+                    ;   node tools/asm.js rom/test_pattern.s -o rom/test_pattern.bin --range C000:FFFF
+                    
+                    ; ---- I/O ----
+                    KEY_ROW    = $8000
+                    KEY_COL    = $8001
+                    LCD_ANN    = $8002
+                    LCD_CTRL   = $8003
+                    TIMER_CTRL = $8010
+                    BEEP       = $8020
+                    
+                    VRAM       = $0400          ; 96バイト × 4ページ
+                    PAGE1      = VRAM+96
+                    PAGE2      = VRAM+192
+                    PAGE3      = VRAM+288
+                    
+                    ; ---- ゼロページ ----
+                    ticks      = $00            ; タイマー割り込みの回数(64Hz)
+                    ptr        = $02            ; 2バイト
+                    px         = $04
+                    py         = $05
+                    dir        = $06
+                    tmp        = $07
+                    anykey     = $08            ; 今回押されていたキー(全行のOR)
+                    prevkey    = $09            ; 前回の anykey
+                    
+0000  FF FF FF FF +         .org $C000
+                    
+                    ; ===== リセット =====
+                    reset:
+C000  78                    sei
+C001  D8                    cld
+C002  A2 FF                 ldx #$FF
+C004  9A                    txs
+C005  A9 81                 lda #$81                ; 表示オン、コントラスト8
+C007  8D 03 80              sta LCD_CTRL
+                    
+                    ; ---- 枠: 上下の線 ----
+C00A  A2 00                 ldx #0
+                    frame_h:
+C00C  A9 01                 lda #$01                ; 一番上のドット
+C00E  9D 00 04              sta VRAM,X
+C011  A9 80                 lda #$80                ; 一番下のドット
+C013  9D 20 05              sta PAGE3,X
+C016  E8                    inx
+C017  E0 60                 cpx #96
+C019  D0 F1                 bne frame_h
+                    
+                    ; ---- 枠: 左右の線 ----
+C01B  A9 FF                 lda #$FF
+C01D  8D 00 04              sta VRAM
+C020  8D 60 04              sta PAGE1
+C023  8D C0 04              sta PAGE2
+C026  8D 20 05              sta PAGE3
+C029  8D 5F 04              sta VRAM+95
+C02C  8D BF 04              sta PAGE1+95
+C02F  8D 1F 05              sta PAGE2+95
+C032  8D 7F 05              sta PAGE3+95
+                    
+                    ; ---- 文字「PX-65」(ページ1の中央) ----
+C035  A2 00                 ldx #0
+                    logo_loop:
+C037  BD 39 C1              lda logo,X
+C03A  9D 81 04              sta PAGE1+33,X
+C03D  E8                    inx
+C03E  E0 1E                 cpx #30
+C040  D0 F5                 bne logo_loop
+                    
+                    ; ---- 三角波(y=17〜30) ----
+C042  A9 1E                 lda #30
+C044  85 05                 sta py
+C046  A9 FF                 lda #$FF                ; 上向き(-1)から始める
+C048  85 06                 sta dir
+C04A  A9 01                 lda #1
+C04C  85 04                 sta px
+                    wave_loop:
+C04E  A6 04                 ldx px
+C050  A4 05                 ldy py
+C052  20 F2 C0              jsr plot
+C055  A5 05                 lda py
+C057  18                    clc
+C058  65 06                 adc dir
+C05A  85 05                 sta py
+C05C  C9 11                 cmp #17
+C05E  F0 04                 beq wave_flip
+C060  C9 1E                 cmp #30
+C062  D0 06                 bne wave_next
+                    wave_flip:
+C064  A5 06                 lda dir
+C066  49 FE                 eor #$FE                ; $FF(-1) と $01(+1) を入れ替える
+C068  85 06                 sta dir
+                    wave_next:
+C06A  E6 04                 inc px
+C06C  A5 04                 lda px
+C06E  C9 5F                 cmp #95
+C070  D0 DC                 bne wave_loop
+                    
+                    ; ---- タイマー割り込みを有効にして待つ ----
+C072  A9 81                 lda #$81                ; IRQ有効、要求をクリア
+C074  8D 10 80              sta TIMER_CTRL
+C077  58                    cli
+                    main:
+C078  CB                    wai
+C079  20 91 C0              jsr scan_keys
+C07C  A5 00                 lda ticks
+C07E  29 1F                 and #$1F                ; 32回(0.5秒)に1回
+C080  D0 F6                 bne main
+C082  A2 04                 ldx #4                  ; カーソル(5×7ドット)を反転
+                    cursor_loop:
+C084  BD B4 04              lda PAGE1+84,X
+C087  49 7F                 eor #$7F
+C089  9D B4 04              sta PAGE1+84,X
+C08C  CA                    dex
+C08D  10 F5                 bpl cursor_loop
+C08F  80 E7                 bra main
+                    
+                    ; ===== キーボードを読む =====
+                    ; 8行を順に読み、押されているキーを左端の8×8ドットに表示する(1列が1行ぶん)。
+                    ; 何も押されていない状態から押されたら短くビープを鳴らす。SHIFTが押されていたらSHIFT表示を点ける。
+                    scan_keys:
+C091  64 08                 stz anykey
+C093  A2 00                 ldx #0
+                    sk_loop:
+C095  BD 31 C1              lda row_select,X
+C098  8D 00 80              sta KEY_ROW
+C09B  AD 01 80              lda KEY_COL
+C09E  49 FF                 eor #$FF                ; 押されている列を1にする
+C0A0  9D 64 04              sta PAGE1+4,X
+C0A3  05 08                 ora anykey
+C0A5  85 08                 sta anykey
+C0A7  E8                    inx
+C0A8  E0 08                 cpx #8
+C0AA  D0 E9                 bne sk_loop
+                    
+C0AC  AD 67 04              lda PAGE1+4+3           ; 行3の列4がSHIFT
+C0AF  29 10                 and #$10
+C0B1  F0 02                 beq sk_noshift
+C0B3  A9 02                 lda #$02                ; SHIFT表示
+                    sk_noshift:
+C0B5  8D 02 80              sta LCD_ANN
+                    
+C0B8  A5 08                 lda anykey
+C0BA  F0 09                 beq sk_save             ; 何も押されていない
+C0BC  A5 09                 lda prevkey
+C0BE  D0 03                 bne sk_held             ; 押しっぱなし
+C0C0  20 C8 C0              jsr play_beep
+                    sk_held:
+C0C3  A5 08                 lda anykey
+                    sk_save:
+C0C5  85 09                 sta prevkey
+C0C7  60                    rts
+                    
+                    ; ===== ビープ(約2kHz、約0.1秒) =====
+                    ; 鳴らしている間はBUSY表示を点ける
+                    play_beep:
+C0C8  AD 02 80              lda LCD_ANN
+C0CB  09 01                 ora #$01
+C0CD  8D 02 80              sta LCD_ANN
+C0D0  A0 C8                 ldy #200
+                    play_beep_loop:
+C0D2  A9 01                 lda #1
+C0D4  8D 20 80              sta BEEP
+C0D7  20 EC C0              jsr delay
+C0DA  9C 20 80              stz BEEP
+C0DD  20 EC C0              jsr delay
+C0E0  88                    dey
+C0E1  D0 EF                 bne play_beep_loop
+C0E3  AD 02 80              lda LCD_ANN
+C0E6  29 FE                 and #$FE
+C0E8  8D 02 80              sta LCD_ANN
+C0EB  60                    rts
+                    
+                    ; 約250サイクル待つ(Xを壊す)
+                    delay:
+C0EC  A2 30                 ldx #48
+                    delay_loop:
+C0EE  CA                    dex
+C0EF  D0 FD                 bne delay_loop
+C0F1  60                    rts
+                    
+                    ; ===== ドットを点灯する =====
+                    ; 入力: X = x座標(0〜95)、Y = y座標(0〜31)
+                    ; 壊すレジスタ: A, Y
+                    plot:
+C0F2  DA                    phx
+C0F3  98                    tya
+C0F4  29 07                 and #7
+C0F6  85 07                 sta tmp                 ; ページ内のビット番号
+C0F8  98                    tya
+C0F9  4A                    lsr
+C0FA  4A                    lsr
+C0FB  4A                    lsr
+C0FC  A8                    tay                     ; ページ番号
+C0FD  8A                    txa
+C0FE  18                    clc
+C0FF  79 21 C1              adc page_lo,Y
+C102  85 02                 sta ptr
+C104  B9 25 C1              lda page_hi,Y
+C107  69 00                 adc #0
+C109  85 03                 sta ptr+1
+C10B  A4 07                 ldy tmp
+C10D  B9 29 C1              lda bitmask,Y
+C110  12 02                 ora (ptr)
+C112  92 02                 sta (ptr)
+C114  FA                    plx
+C115  60                    rts
+                    
+                    ; ===== 割り込み =====
+                    irq:
+C116  48                    pha
+C117  A9 81                 lda #$81                ; 要求をクリア(IRQは有効のまま)
+C119  8D 10 80              sta TIMER_CTRL
+C11C  E6 00                 inc ticks
+C11E  68                    pla
+C11F  40                    rti
+                    
+                    nmi:
+C120  40                    rti
+                    
+                    ; ===== データ =====
+C121  00 60 C0 20   page_lo:  .byte <VRAM, <PAGE1, <PAGE2, <PAGE3
+C125  04 04 04 05   page_hi:  .byte >VRAM, >PAGE1, >PAGE2, >PAGE3
+C129  01 02 04 08 + bitmask:  .byte $01, $02, $04, $08, $10, $20, $40, $80
+C131  FE FD FB F7 + row_select: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+                    
+                    ; 5×7フォント(1バイト = 縦1列、bit0が上)+ 1列の空白
+                    logo:
+C139  7F 09 09 09 +         .byte $7F, $09, $09, $09, $06, $00   ; P
+C13F  63 14 08 14 +         .byte $63, $14, $08, $14, $63, $00   ; X
+C145  08 08 08 08 +         .byte $08, $08, $08, $08, $08, $00   ; -
+C14B  3C 4A 49 49 +         .byte $3C, $4A, $49, $49, $30, $00   ; 6
+C151  27 45 45 45 +         .byte $27, $45, $45, $45, $39, $00   ; 5
+                    
+                    ; ===== ベクタ =====
+C157  FF FF FF FF +         .org $FFFA
+FFFA  20 C1 00 C0 +         .word nmi, reset, irq
+                    

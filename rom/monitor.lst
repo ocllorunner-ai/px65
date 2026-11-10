@@ -1,0 +1,3857 @@
+                    ; PX-65 モニター ROM
+                    ;
+                    ;   node tools/asm.js rom/monitor.s -o rom/monitor.bin --range A000:FFFF -l rom/monitor.lst
+                    ;
+                    ; 使い方は docs/monitor.md を参照。
+                    ;
+                    ; ROM の配置:
+                    ;   $A000-$DFFF  BASIC(rom/basic.s。入っていなければ空き)
+                    ;   $E000-       モニター本体、フォント、命令表
+                    ;   $FF00-       BIOS のジャンプテーブル
+                    ;   $FFFA-$FFFF  割り込みベクタ
+                    
+                    ; ===================================================================
+                    ; 定数
+                    ; ===================================================================
+                    
+                    ; PX-65 の共通定義(モニターと BASIC の両方が .include する)
+                    ;
+                    ; ここにあるアドレスと番号は、ROM の外のプログラムからも使ってよい(今後も変えない)。
+                    
+                    ; ---- I/O ----
+                    KEY_ROW    = $8000
+                    KEY_COL    = $8001
+                    LCD_ANN    = $8002
+                    LCD_CTRL   = $8003
+                    TIMER_CTRL = $8010
+                    BEEP       = $8020
+                    TAPE_DATA  = $8030
+                    TAPE_CTRL  = $8031
+                    
+                    TAPE_STOP  = $00            ; TAPE_CTRL に書くコマンド
+                    TAPE_PLAY  = $01
+                    TAPE_REC   = $02
+                    TAPE_APPEND = $03
+                    TAPE_CANCEL = $04            ; 録音をやめ、録音前の中身に戻す
+                    TAPE_FULL  = $20            ; TAPE_CTRL を読んだときのビット: 録音中に、いっぱいで書けなかった
+                    
+                    ANN_BUSY   = $01            ; LCD_ANN のビット
+                    ANN_SHIFT  = $02
+                    ANN_CAPS   = $04
+                    ANN_DEG    = $08
+                    ANN_RAD    = $10
+                    ANN_RUN    = $20
+                    ANN_PRO    = $40
+                    ANN_LOW    = $80
+                    
+                    VRAM       = $0400          ; 96バイト × 4ページ
+                    COLS       = 16
+                    ROWS       = 4
+                    
+                    ; ---- キーコード(GETKEY が返す値) ----
+                    K_DEL      = $08
+                    K_CLS      = $0C            ; CHROUT に渡すと画面を消す
+                    K_RET      = $0D
+                    K_LEFT     = $11
+                    K_RIGHT    = $12
+                    K_UP       = $13
+                    K_DOWN     = $14
+                    
+                    ; ---- ゼロページ(モニターが使う $E0-$FF のうち、外から読んでよいもの) ----
+                    cur_x      = $EE            ; カーソルの桁(0-15。16は「次の文字で改行」)
+                    cur_y      = $EF            ; カーソルの行(0-3)
+                    ticks      = $F2            ; 2 タイマー割り込みの回数(64Hz)
+                    
+                    ; ---- 入力行 ----
+                    LINEBUF    = $0300          ; 64 GETLINE が読んだ行
+                    HISTBUF    = $0340          ; 64 直前に入力した行
+                    LINEMAX    = 58             ; 1行の最大文字数
+                    LINELEN    = $0250          ; LINEBUF の文字数
+                    HISTLEN    = $0251
+                    
+                    ; ---- テープの読み書き(BIOS_TSAVE, BIOS_TFIND, BIOS_TLOAD に渡す値) ----
+                    T_TYPE     = $02A0          ; 種類
+                    T_NAME     = $02A1          ; 8 名前(足りない分は空白)
+                    T_START    = $02A9          ; 2 開始番地
+                    T_LEN      = $02AB          ; 2 長さ
+                    
+                    TT_MEM     = $01            ; T_TYPE: メモリ(モニターの W)
+                    TT_BASIC   = $02            ; T_TYPE: BASIC のプログラム
+                    
+                    TE_NOTAPE  = 1              ; テープのエラー(C=1 のときの A)
+                    TE_NOTFOUND = 2
+                    TE_BAD     = 3
+                    TE_FULL    = 4              ; 保存: テープがいっぱい(テープは保存前のまま)
+                    
+                    ; ---- BIOS のジャンプテーブル ----
+                    BIOS_CHROUT    = $FF00          ; A の文字を出力。A, X, Y を保存
+                    BIOS_GETKEY    = $FF03          ; キーを待つ -> A。X, Y を保存
+                    BIOS_KEYCHK    = $FF06          ; キーがあれば C=1, A。X, Y を保存
+                    BIOS_GETLINE   = $FF09          ; 1行入力 -> LINEBUF, LINELEN。A, X を壊す
+                    BIOS_PRHEX     = $FF0C          ; A を16進数2桁で出力
+                    BIOS_PRINT     = $FF0F          ; JSR の後ろの文字列(0終わり)を出力
+                    BIOS_BEEP      = $FF12          ; A=高さ X=長さ。A, X, Y を壊す
+                    BIOS_CLS       = $FF15          ; 画面を消す。A, X を壊す
+                    BIOS_LOCATE    = $FF18          ; X=桁 Y=行
+                    BIOS_MONITOR   = $FF1B          ; モニターに戻ってレジスタを表示
+                    BIOS_GETLINE_ED= $FF1E          ; LINEBUF の LINELEN 文字を表示してから入力を続ける
+                    BIOS_MONENTER  = $FF21          ; モニターのプロンプトに入る(戻らない)
+                    BIOS_TSAVE     = $FF24          ; T_* のブロックをテープの最後に足す
+                    BIOS_TFIND     = $FF27          ; A=0 で先頭から、A=1 で続きから、次のブロックの見出しを T_* に読む
+                    BIOS_TLOAD     = $FF2A          ; BIOS_TFIND で見つけたブロックのデータを T_START から読む
+                    BIOS_CUROFF    = $FF2D          ; 点滅中のカーソルを消す(入力を途中でやめたとき)
+                    
+                    ; $02C6-$02FF は BASIC が使う
+                    
+                    ; ---- RAM ベクタ(割り込みの処理の番地。書き換えてよい) ----
+                    IRQVEC     = $02C0
+                    BRKVEC     = $02C2
+                    NMIVEC     = $02C4
+                    
+                    ; ---- BASIC の入口(BASIC の ROM の先頭) ----
+                    BASIC_COLD = $A000
+                    BASIC_WARM = $A003         ; C=0 リセットから(変数を消す)、C=1 モニターの Q から(変数を残す)
+                    BASIC_SIG  = $A006          ; "BASIC" があれば BASIC が入っている
+                    
+                    
+                    USER_START = $0600          ; R の PC の初期値
+                    REPEAT_DELAY = 32           ; キーリピートが始まるまで(1/64秒単位)
+                    REPEAT_RATE  = 4            ; キーリピートの間隔
+                    
+                    ; ---- ゼロページ($E0-$FF はシステム用) ----
+                    ptr        = $E0            ; 2 汎用ポインター
+                    ptr2       = $E2            ; 2
+                    num        = $E4            ; 2 読み取った16進数
+                    a1         = $E6            ; 2 コマンドの引数1
+                    a2         = $E8            ; 2 引数2
+                    a3         = $EA            ; 2 引数3
+                    daddr      = $EC            ; 2 逆アセンブルするアドレス
+                                                ; $EE cur_x, $EF cur_y(px65.inc)
+                    vptr       = $F0            ; 2 VRAM のポインター
+                                                ; $F2-$F3 ticks(px65.inc)
+                    lp         = $F4            ; 入力行を読む位置
+                    tmp        = $F5
+                    tmp2       = $F6
+                    cur_on     = $F7            ; カーソルを表示中なら1
+                    cnt        = $F8
+                    ir_tmp     = $F9            ; 以下3つは割り込み処理専用
+                    ir_new     = $FA
+                    ir_row     = $FB
+                    gptr       = $FC            ; 2 フォントのポインター
+                    sptr       = $FE            ; 2 文字列のポインター
+                    
+                    ; ---- ワークエリア($0200-$02FF) ----
+                    KBUF       = $0200          ; 16 キーバッファ(リング)
+                    KPREV      = $0210          ; 8  前回スキャンしたマトリクス
+                    KB_HEAD    = $0218
+                    KB_TAIL    = $0219
+                    RPT_KEY    = $021A          ; リピート中のキー位置($FF ならなし)
+                    RPT_CNT    = $021B
+                    KB_SHIFT   = $021C          ; SHIFT が押されていれば0以外
+                    UNGOT      = $021D          ; 次に getkey が返すキー(0 ならなし)
+                    BEEP_P     = $021E
+                    LINEPOS    = $021F          ; GETLINE: カーソルの位置(LINEBUF の何文字目か)
+                    BYTEBUF    = $0252          ; 16 バイト列の引数
+                    R_PCL      = $0262          ; 以下、ユーザーのレジスタ
+                    R_PCH      = $0263
+                    R_A        = $0264
+                    R_X        = $0265
+                    R_Y        = $0266
+                    R_P        = $0267
+                    R_S        = $0268
+                    MON_SP     = $0269          ; モニターが使うスタックの底
+                    MON_ACTIVE = $026A          ; モニターが動いている間は1
+                    FRESH      = $026B          ; 1 なら次の実行は新しく始める(戻り番地を積む)
+                    RUN_MODE   = $026C          ; 0: G  1: T/P  2: ブレークポイントを1命令越えてから G
+                    STEP_CNT   = $026D
+                    STEP_OVER  = $026E          ; 1 なら P(JSR を飛ばす)
+                    STOP_WHY   = $026F
+                    BP_LO      = $0270          ; 4 ブレークポイント
+                    BP_HI      = $0274          ; 4 ($80以上なら空き)
+                    BP_SAVE    = $0278          ; 4 BRK を書く前のバイト
+                    BP_INST    = $027C          ; ブレークポイントを書き込み中なら1
+                    TB_N       = $027D          ; ステップ実行用の一時 BRK の数(0-2)
+                    TB_LO      = $027E          ; 2
+                    TB_HI      = $0280          ; 2
+                    TB_SAVE    = $0282          ; 2
+                    DNEXT      = $0284          ; 2 次の D の番地
+                    UNEXT      = $0286          ; 2 次の U の番地
+                    MAGIC      = $0288          ; 2 ウォームスタートの目印
+                    A_ADDR     = $028A          ; 2 アセンブラ: 次に書く番地
+                    A_START    = $028C          ; 2 アセンブラ: A を始めた番地
+                    A_SP       = $028E          ; アセンブラ: 1行の始めのスタックポインター(エラーで戻す)
+                    A_MNEM     = $028F          ; ニーモニックの番号
+                    A_BIT      = $0290          ; RMB/SMB/BBR/BBS のビット番号($FF ならなし)
+                    A_CLS      = $0291          ; オペランドの形(下の a_cls_* を参照)
+                    A_LONG     = $0292          ; オペランドを3桁以上で書いたら1
+                    A_VAL      = $0293          ; 2 オペランドの値
+                    A_VAL2     = $0295          ; 2 BBR/BBS の分岐先
+                    A_MODE     = $0297          ; 決まったアドレッシング
+                                                ; $02C0-$02C5 IRQVEC, BRKVEC, NMIVEC(px65.inc)
+                    T_PEND     = $02AE          ; 2 テープ: 読み残しのバイト数
+                    T_SUM      = $02B0          ; テープ: チェックサム
+                    BOOT_COLD  = $02B1          ; リセットがコールドスタートなら1
+                    
+                    MAGIC1     = $A5
+                    MAGIC2     = $5A
+                    
+                    RM_GO      = 0
+                    RM_STEP    = 1
+                    RM_STEPGO  = 2
+                    
+                    WHY_BP     = 0              ; モニターが置いた BRK で止まった
+                    WHY_BRK    = 1              ; プログラムの BRK 命令
+                    WHY_BREAK  = 2              ; BREAK キー
+                    WHY_RTS    = 3              ; RTS でモニターに戻った
+                    
+0000  FF FF FF FF +         .org $E000
+                    
+                    ; ===================================================================
+                    ; リセット
+                    ; ===================================================================
+                    reset:
+E000  78                    sei
+E001  D8                    cld
+E002  A2 FF                 ldx #$FF
+E004  9A                    txs
+E005  A9 81                 lda #$81                ; 表示オン、コントラスト8
+E007  8D 03 80              sta LCD_CTRL
+E00A  9C 02 80              stz LCD_ANN
+                    
+                            ; ウォームスタートか(RAM が残っていて目印がある)
+E00D  AD 88 02              lda MAGIC
+E010  C9 A5                 cmp #MAGIC1
+E012  D0 1D                 bne cold
+E014  AD 89 02              lda MAGIC+1
+E017  C9 5A                 cmp #MAGIC2
+E019  D0 16                 bne cold
+E01B  AD 7D 02              lda TB_N
+E01E  C9 03                 cmp #3
+E020  B0 0F                 bcs cold
+E022  AD 7C 02              lda BP_INST
+E025  C9 02                 cmp #2
+E027  B0 08                 bcs cold
+E029  20 B0 F4              jsr remove_brks         ; 実行中にリセットされたら BRK を元に戻す
+E02C  9C B1 02              stz BOOT_COLD
+E02F  80 44                 bra start
+                    
+                    cold:
+E031  A2 00                 ldx #0
+                    cold_clr:
+E033  9E 00 02              stz $0200,X
+E036  E8                    inx
+E037  D0 FA                 bne cold_clr
+E039  A2 E0                 ldx #$E0
+                    cold_zp:
+E03B  74 00                 stz $00,X
+E03D  E8                    inx
+E03E  D0 FB                 bne cold_zp
+E040  A9 FF                 lda #$FF
+E042  A2 03                 ldx #3
+                    cold_bp:
+E044  9D 74 02              sta BP_HI,X
+E047  CA                    dex
+E048  10 FA                 bpl cold_bp
+E04A  A9 00                 lda #<USER_START
+E04C  8D 62 02              sta R_PCL
+E04F  8D 84 02              sta DNEXT
+E052  8D 86 02              sta UNEXT
+E055  8D 8A 02              sta A_ADDR
+E058  A9 06                 lda #>USER_START
+E05A  8D 63 02              sta R_PCH
+E05D  8D 85 02              sta DNEXT+1
+E060  8D 87 02              sta UNEXT+1
+E063  8D 8B 02              sta A_ADDR+1
+E066  A9 A5                 lda #MAGIC1
+E068  8D 88 02              sta MAGIC
+E06B  A9 5A                 lda #MAGIC2
+E06D  8D 89 02              sta MAGIC+1
+E070  A9 01                 lda #1
+E072  8D B1 02              sta BOOT_COLD
+                    
+                    start:
+                            ; RAM ベクタはいつも初期値に戻す
+E075  A2 05                 ldx #5
+                    st_vec:
+E077  BD 12 E1              lda default_vecs,X
+E07A  9D C0 02              sta IRQVEC,X
+E07D  CA                    dex
+E07E  10 F7                 bpl st_vec
+                            ; キーボード
+E080  9C 18 02              stz KB_HEAD
+E083  9C 19 02              stz KB_TAIL
+E086  9C 1C 02              stz KB_SHIFT
+E089  9C 1D 02              stz UNGOT
+E08C  A9 FF                 lda #$FF
+E08E  8D 1A 02              sta RPT_KEY
+E091  A2 07                 ldx #7
+                    st_kp:
+E093  9E 10 02              stz KPREV,X
+E096  CA                    dex
+E097  10 FA                 bpl st_kp
+                            ; レジスタ
+E099  A9 FF                 lda #$FF
+E09B  8D 68 02              sta R_S
+E09E  8D 69 02              sta MON_SP
+E0A1  A9 01                 lda #1
+E0A3  8D 6B 02              sta FRESH
+E0A6  9C 6C 02              stz RUN_MODE
+                    
+                            ; BASIC が入っていれば BASIC を起動する
+E0A9  20 D7 E0              jsr basic_present
+E0AC  90 0C                 bcc st_mon
+E0AE  AD B1 02              lda BOOT_COLD
+E0B1  F0 03                 beq st_bwarm
+E0B3  4C 00 A0              jmp BASIC_COLD
+                    st_bwarm:
+E0B6  18                    clc                     ; リセット: 変数は消す
+E0B7  4C 03 A0              jmp BASIC_WARM
+                    st_mon:
+E0BA  20 C8 E2              jsr cls
+E0BD  20 89 E3              jsr prinline
+E0C0  50 58 2D 36 +         .byte "PX-65 MONITOR", K_RET, "V0.11", 0
+E0D4  4C 27 E5              jmp mon_restart
+                    
+                    ; BASIC の ROM が入っていれば C=1
+                    basic_present:
+E0D7  A2 04                 ldx #4
+                    bpr_1:
+E0D9  BD 06 A0              lda BASIC_SIG,X
+E0DC  DD E8 E0              cmp sig_text,X
+E0DF  D0 05                 bne bpr_no
+E0E1  CA                    dex
+E0E2  10 F5                 bpl bpr_1
+E0E4  38                    sec
+E0E5  60                    rts
+                    bpr_no:
+E0E6  18                    clc
+E0E7  60                    rts
+                    sig_text:
+E0E8  42 41 53 49 +         .byte "BASIC"
+                    
+                    ; BIOS の MONENTER: モニターのプロンプトに入る(BASIC の MON から)
+                    mon_enter:
+E0ED  78                    sei
+E0EE  D8                    cld
+E0EF  A2 05                 ldx #5                  ; ベクタをモニターのものに戻す
+                    me_1:
+E0F1  BD 12 E1              lda default_vecs,X
+E0F4  9D C0 02              sta IRQVEC,X
+E0F7  CA                    dex
+E0F8  10 F7                 bpl me_1
+E0FA  A9 FF                 lda #$FF
+E0FC  8D 69 02              sta MON_SP
+E0FF  8D 68 02              sta R_S
+E102  A9 01                 lda #1
+E104  8D 6B 02              sta FRESH
+E107  9C 6C 02              stz RUN_MODE
+E10A  A9 21                 lda #ANN_BUSY+ANN_RUN   ; BASIC の実行中の表示も消す
+E10C  1C 02 80              trb LCD_ANN
+E10F  4C 27 E5              jmp mon_restart
+                    
+                    default_vecs:
+E112  2F E1 4C F5 +         .word sys_irq, mon_brk, mon_nmi
+                    
+                    ; ===================================================================
+                    ; 割り込みの入口
+                    ; ===================================================================
+                    
+                    ; IRQ と BRK。スタックに積まれた P の B ビットで区別し、RAM ベクタへ飛ぶ。
+                    ; どちらのベクタも、割り込みが起きたときと同じレジスタで呼ばれる。
+                    irq_entry:
+E118  48                    pha
+E119  DA                    phx
+E11A  BA                    tsx
+E11B  BD 03 01              lda $0103,X             ; 積まれた P
+E11E  29 10                 and #$10
+E120  D0 05                 bne irq_is_brk
+E122  FA                    plx
+E123  68                    pla
+E124  6C C0 02              jmp (IRQVEC)
+                    irq_is_brk:
+E127  FA                    plx
+E128  68                    pla
+E129  6C C2 02              jmp (BRKVEC)
+                    
+                    nmi_entry:
+E12C  6C C4 02              jmp (NMIVEC)
+                    
+                    ; 標準のタイマー割り込み処理: ticks を進めてキーボードを読む
+                    sys_irq:
+E12F  48                    pha
+E130  DA                    phx
+E131  5A                    phy
+E132  A9 81                 lda #$81                ; 要求をクリア(IRQは有効のまま)
+E134  8D 10 80              sta TIMER_CTRL
+E137  E6 F2                 inc ticks
+E139  D0 02                 bne sirq_1
+E13B  E6 F3                 inc ticks+1
+                    sirq_1:
+E13D  20 44 E1              jsr kbd_scan
+E140  7A                    ply
+E141  FA                    plx
+E142  68                    pla
+E143  40                    rti
+                    
+                    ; ===================================================================
+                    ; キーボード
+                    ; ===================================================================
+                    
+                    ; マトリクスを読み、新しく押されたキーとリピートをキーバッファに入れる(割り込みから呼ぶ)
+                    kbd_scan:
+E144  A9 FF                 lda #$FF
+E146  85 FA                 sta ir_new
+E148  A2 00                 ldx #0
+                    ks_row:
+E14A  BD 40 F6              lda row_select,X
+E14D  8D 00 80              sta KEY_ROW
+E150  AD 01 80              lda KEY_COL
+E153  49 FF                 eor #$FF                ; 押されている列を1に
+E155  E0 03                 cpx #3
+E157  D0 17                 bne ks_store
+                            ; 行3の列4は SHIFT。キーとしては扱わない
+E159  48                    pha
+E15A  29 10                 and #$10
+E15C  8D 1C 02              sta KB_SHIFT
+E15F  F0 07                 beq ks_shoff
+E161  A9 02                 lda #ANN_SHIFT
+E163  0C 02 80              tsb LCD_ANN
+E166  80 05                 bra ks_shd
+                    ks_shoff:
+E168  A9 02                 lda #ANN_SHIFT
+E16A  1C 02 80              trb LCD_ANN
+                    ks_shd:
+E16D  68                    pla
+E16E  29 EF                 and #$EF
+                    ks_store:
+E170  85 F9                 sta ir_tmp              ; 今回の状態
+E172  BD 10 02              lda KPREV,X
+E175  49 FF                 eor #$FF
+E177  25 F9                 and ir_tmp              ; 新しく押された列
+E179  48                    pha
+E17A  A5 F9                 lda ir_tmp
+E17C  9D 10 02              sta KPREV,X
+E17F  68                    pla
+E180  F0 16                 beq ks_next
+E182  24 FA                 bit ir_new              ; すでに見つけていれば最初の1つだけ
+E184  10 12                 bpl ks_next
+E186  A0 00                 ldy #0
+                    ks_bit:
+E188  4A                    lsr
+E189  B0 03                 bcs ks_found
+E18B  C8                    iny
+E18C  80 FA                 bra ks_bit
+                    ks_found:
+E18E  84 FB                 sty ir_row
+E190  8A                    txa
+E191  0A                    asl
+E192  0A                    asl
+E193  0A                    asl
+E194  05 FB                 ora ir_row
+E196  85 FA                 sta ir_new
+                    ks_next:
+E198  E8                    inx
+E199  E0 08                 cpx #8
+E19B  D0 AD                 bne ks_row
+E19D  A9 FF                 lda #$FF
+E19F  8D 00 80              sta KEY_ROW
+                    
+E1A2  A5 FA                 lda ir_new
+E1A4  30 0C                 bmi ks_repeat
+E1A6  8D 1A 02              sta RPT_KEY
+E1A9  A9 20                 lda #REPEAT_DELAY
+E1AB  8D 1B 02              sta RPT_CNT
+E1AE  A5 FA                 lda ir_new
+E1B0  80 2C                 bra kb_enqueue
+                    ks_repeat:
+E1B2  AD 1A 02              lda RPT_KEY
+E1B5  30 26                 bmi ks_done
+                            ; まだ押されているか
+E1B7  4A                    lsr
+E1B8  4A                    lsr
+E1B9  4A                    lsr
+E1BA  A8                    tay                     ; 行
+E1BB  AD 1A 02              lda RPT_KEY
+E1BE  29 07                 and #7
+E1C0  AA                    tax
+E1C1  BD 38 F6              lda bitmask,X
+E1C4  39 10 02              and KPREV,Y
+E1C7  F0 0F                 beq ks_released
+E1C9  CE 1B 02              dec RPT_CNT
+E1CC  D0 0F                 bne ks_done
+E1CE  A9 04                 lda #REPEAT_RATE
+E1D0  8D 1B 02              sta RPT_CNT
+E1D3  AD 1A 02              lda RPT_KEY
+E1D6  80 06                 bra kb_enqueue
+                    ks_released:
+E1D8  A9 FF                 lda #$FF
+E1DA  8D 1A 02              sta RPT_KEY
+                    ks_done:
+E1DD  60                    rts
+                    
+                    ; A = キーの位置(行×8+列)を文字にしてバッファに入れる
+                    kb_enqueue:
+E1DE  AA                    tax
+E1DF  AD 1C 02              lda KB_SHIFT
+E1E2  F0 05                 beq kbe_ns
+E1E4  BD 88 F6              lda keymap_s,X
+E1E7  80 03                 bra kbe_1
+                    kbe_ns:
+E1E9  BD 48 F6              lda keymap,X
+                    kbe_1:
+E1EC  F0 12                 beq kbe_done            ; 文字のないキー
+E1EE  AE 19 02              ldx KB_TAIL
+E1F1  9D 00 02              sta KBUF,X
+E1F4  E8                    inx
+E1F5  8A                    txa
+E1F6  29 0F                 and #$0F
+E1F8  CD 18 02              cmp KB_HEAD
+E1FB  F0 03                 beq kbe_done            ; いっぱい
+E1FD  8D 19 02              sta KB_TAIL
+                    kbe_done:
+E200  60                    rts
+                    
+                    ; キーがあれば C=1、A=キー。なければ C=0(待たない)。X, Y は保存
+                    keyget:
+E201  AD 1D 02              lda UNGOT
+E204  F0 05                 beq kg_buf
+E206  9C 1D 02              stz UNGOT
+E209  38                    sec
+E20A  60                    rts
+                    kg_buf:
+E20B  DA                    phx
+E20C  AE 18 02              ldx KB_HEAD
+E20F  EC 19 02              cpx KB_TAIL
+E212  F0 0F                 beq kg_none
+E214  BD 00 02              lda KBUF,X
+E217  48                    pha
+E218  E8                    inx
+E219  8A                    txa
+E21A  29 0F                 and #$0F
+E21C  8D 18 02              sta KB_HEAD
+E21F  68                    pla
+E220  FA                    plx
+E221  38                    sec
+E222  60                    rts
+                    kg_none:
+E223  FA                    plx
+E224  18                    clc
+E225  60                    rts
+                    
+                    ; キーを1つ待つ(カーソルを点滅させる)。A = キー。X, Y は保存
+                    ; 割り込みが有効になっている必要がある
+                    getkey:
+E226  20 01 E2              jsr keyget
+E229  B0 19                 bcs gk_got
+E22B  A5 F2                 lda ticks
+E22D  29 10                 and #$10                ; 約0.25秒ごとに点滅
+E22F  F0 09                 beq gk_on
+E231  A5 F7                 lda cur_on
+E233  F0 0C                 beq gk_wait
+E235  20 2F E3              jsr cur_toggle
+E238  80 07                 bra gk_wait
+                    gk_on:
+E23A  A5 F7                 lda cur_on
+E23C  D0 03                 bne gk_wait
+E23E  20 2F E3              jsr cur_toggle
+                    gk_wait:
+E241  CB                    wai
+E242  80 E2                 bra getkey
+                    gk_got:
+E244  48                    pha
+E245  20 4C E3              jsr cursor_off
+E248  68                    pla
+E249  60                    rts
+                    
+                    ; ===================================================================
+                    ; 画面
+                    ; ===================================================================
+                    
+                    ; 1文字を出力する。A, X, Y は保存
+                    ;   $0D 改行、$08 1文字戻って消す、$0C 画面を消す、$20-$7E 文字
+                    putc:
+E24A  48                    pha
+E24B  DA                    phx
+E24C  5A                    phy
+E24D  C9 0D                 cmp #K_RET
+E24F  F0 24                 beq pc_cr
+E251  C9 08                 cmp #K_DEL
+E253  F0 2A                 beq pc_bs
+E255  C9 0C                 cmp #K_CLS
+E257  F0 21                 beq pc_cls
+E259  C9 20                 cmp #$20
+E25B  90 14                 bcc pc_done
+E25D  C9 7F                 cmp #$7F
+E25F  B0 10                 bcs pc_done
+E261  A6 EE                 ldx cur_x
+E263  E0 10                 cpx #COLS
+E265  90 05                 bcc pc_draw
+E267  48                    pha
+E268  20 98 E2              jsr newline
+E26B  68                    pla
+                    pc_draw:
+E26C  20 E1 E2              jsr drawch
+E26F  E6 EE                 inc cur_x
+                    pc_done:
+E271  7A                    ply
+E272  FA                    plx
+E273  68                    pla
+E274  60                    rts
+                    pc_cr:
+E275  20 98 E2              jsr newline
+E278  80 F7                 bra pc_done
+                    pc_cls:
+E27A  20 C8 E2              jsr cls
+E27D  80 F2                 bra pc_done
+                    pc_bs:
+E27F  A5 EE                 lda cur_x
+E281  F0 04                 beq pc_bs_up
+E283  C6 EE                 dec cur_x
+E285  80 0A                 bra pc_bs_erase
+                    pc_bs_up:
+E287  A5 EF                 lda cur_y
+E289  F0 E6                 beq pc_done
+E28B  C6 EF                 dec cur_y
+E28D  A9 0F                 lda #COLS-1
+E28F  85 EE                 sta cur_x
+                    pc_bs_erase:
+E291  A9 20                 lda #' '
+E293  20 E1 E2              jsr drawch
+E296  80 D9                 bra pc_done
+                    
+                    ; 改行(最下行ならスクロール)
+                    newline:
+E298  64 EE                 stz cur_x
+E29A  E6 EF                 inc cur_y
+E29C  A5 EF                 lda cur_y
+E29E  C9 04                 cmp #ROWS
+E2A0  90 07                 bcc nl_done
+E2A2  20 AA E2              jsr scroll
+E2A5  A9 03                 lda #ROWS-1
+E2A7  85 EF                 sta cur_y
+                    nl_done:
+E2A9  60                    rts
+                    
+                    ; 画面を1行上げる
+                    scroll:
+E2AA  A2 00                 ldx #0
+                    scr_1:
+E2AC  BD 60 04              lda VRAM+96,X           ; ページ1,2 -> 0,1
+E2AF  9D 00 04              sta VRAM,X
+E2B2  E8                    inx
+E2B3  E0 C0                 cpx #192
+E2B5  D0 F5                 bne scr_1
+E2B7  A2 00                 ldx #0
+                    scr_2:
+E2B9  BD 20 05              lda VRAM+288,X          ; ページ3 -> 2
+E2BC  9D C0 04              sta VRAM+192,X
+E2BF  9E 20 05              stz VRAM+288,X
+E2C2  E8                    inx
+E2C3  E0 60                 cpx #96
+E2C5  D0 F2                 bne scr_2
+E2C7  60                    rts
+                    
+                    ; 画面を消してカーソルを左上に
+                    cls:
+E2C8  A2 00                 ldx #0
+                    cls_1:
+E2CA  9E 00 04              stz VRAM,X
+E2CD  9E C0 04              stz VRAM+192,X
+E2D0  E8                    inx
+E2D1  E0 C0                 cpx #192
+E2D3  D0 F5                 bne cls_1
+E2D5  64 EE                 stz cur_x
+E2D7  64 EF                 stz cur_y
+E2D9  64 F7                 stz cur_on
+E2DB  60                    rts
+                    
+                    ; カーソルを X=桁、Y=行 に移す
+                    locate:
+E2DC  86 EE                 stx cur_x
+E2DE  84 EF                 sty cur_y
+E2E0  60                    rts
+                    
+                    ; A の文字をカーソルの位置に描く(カーソルは動かさない)
+                    drawch:
+E2E1  38                    sec
+E2E2  E9 20                 sbc #$20
+E2E4  85 FC                 sta gptr
+E2E6  64 FD                 stz gptr+1
+E2E8  0A                    asl
+E2E9  26 FD                 rol gptr+1
+E2EB  0A                    asl
+E2EC  26 FD                 rol gptr+1              ; ×4
+E2EE  18                    clc
+E2EF  65 FC                 adc gptr
+E2F1  85 FC                 sta gptr
+E2F3  A5 FD                 lda gptr+1
+E2F5  69 00                 adc #0
+E2F7  85 FD                 sta gptr+1              ; ×5
+E2F9  A5 FC                 lda gptr
+E2FB  18                    clc
+E2FC  69 C8                 adc #<font
+E2FE  85 FC                 sta gptr
+E300  A5 FD                 lda gptr+1
+E302  69 F6                 adc #>font
+E304  85 FD                 sta gptr+1
+E306  20 19 E3              jsr cellptr
+E309  A0 00                 ldy #0
+                    dch_1:
+E30B  B1 FC                 lda (gptr),Y
+E30D  91 F0                 sta (vptr),Y
+E30F  C8                    iny
+E310  C0 05                 cpy #5
+E312  D0 F7                 bne dch_1
+E314  A9 00                 lda #0
+E316  91 F0                 sta (vptr),Y
+E318  60                    rts
+                    
+                    ; vptr = カーソル位置のマスの VRAM アドレス
+                    cellptr:
+E319  A5 EE                 lda cur_x
+E31B  0A                    asl
+E31C  65 EE                 adc cur_x
+E31E  0A                    asl                     ; ×6
+E31F  A4 EF                 ldy cur_y
+E321  18                    clc
+E322  79 30 F6              adc row_lo,Y
+E325  85 F0                 sta vptr
+E327  B9 34 F6              lda row_hi,Y
+E32A  69 00                 adc #0
+E32C  85 F1                 sta vptr+1
+E32E  60                    rts
+                    
+                    ; カーソルの表示を反転する
+                    cur_toggle:
+E32F  A5 F7                 lda cur_on
+E331  49 01                 eor #1
+E333  85 F7                 sta cur_on
+E335  A5 EE                 lda cur_x
+E337  C9 10                 cmp #COLS
+E339  B0 10                 bcs ct_done
+E33B  5A                    phy
+E33C  20 19 E3              jsr cellptr
+E33F  A0 05                 ldy #5
+                    ct_1:
+E341  B1 F0                 lda (vptr),Y
+E343  49 FF                 eor #$FF
+E345  91 F0                 sta (vptr),Y
+E347  88                    dey
+E348  10 F7                 bpl ct_1
+E34A  7A                    ply
+                    ct_done:
+E34B  60                    rts
+                    
+                    cursor_off:
+E34C  A5 F7                 lda cur_on
+E34E  F0 03                 beq co_done
+E350  20 2F E3              jsr cur_toggle
+                    co_done:
+E353  60                    rts
+                    
+                    ; 改行(行の途中にいるときだけ)
+                    crlf_if:
+E354  A5 EE                 lda cur_x
+E356  F0 05                 beq crlf_done
+                    crlf:
+E358  A9 0D                 lda #K_RET
+E35A  4C 4A E2              jmp putc
+                    crlf_done:
+E35D  60                    rts
+                    
+                    prspace:
+E35E  A9 20                 lda #' '
+E360  4C 4A E2              jmp putc
+                    
+                    ; A を16進数2桁で表示する。A, X, Y は保存
+                    prhex8:
+E363  48                    pha
+E364  4A                    lsr
+E365  4A                    lsr
+E366  4A                    lsr
+E367  4A                    lsr
+E368  20 74 E3              jsr prnib
+E36B  68                    pla
+E36C  48                    pha
+E36D  29 0F                 and #$0F
+E36F  20 74 E3              jsr prnib
+E372  68                    pla
+E373  60                    rts
+                    prnib:
+E374  C9 0A                 cmp #10
+E376  90 02                 bcc prn_1
+E378  69 06                 adc #6                  ; C=1 なので +7
+                    prn_1:
+E37A  69 30                 adc #'0'
+E37C  4C 4A E2              jmp putc
+                    
+                    ; ゼロページ X, X+1 の16ビット値を4桁で表示する
+                    prhex16:
+E37F  B5 01                 lda 1,X
+E381  20 63 E3              jsr prhex8
+E384  B5 00                 lda 0,X
+E386  4C 63 E3              jmp prhex8
+                    
+                    ; JSR の直後に置いた0終わりの文字列を表示し、その後ろに戻る。X, Y は保存
+                    prinline:
+E389  68                    pla
+E38A  85 FE                 sta sptr
+E38C  68                    pla
+E38D  85 FF                 sta sptr+1
+                    pri_1:
+E38F  E6 FE                 inc sptr
+E391  D0 02                 bne pri_2
+E393  E6 FF                 inc sptr+1
+                    pri_2:
+E395  B2 FE                 lda (sptr)
+E397  F0 05                 beq pri_done
+E399  20 4A E2              jsr putc
+E39C  80 F1                 bra pri_1
+                    pri_done:
+E39E  A5 FF                 lda sptr+1
+E3A0  48                    pha
+E3A1  A5 FE                 lda sptr
+E3A3  48                    pha
+E3A4  60                    rts
+                    
+                    ; ブザーを鳴らす。A = 音の高さ(大きいほど低い)、X = 長さ(周期の数)。A, X, Y を壊す
+                    sound:
+E3A5  8D 1E 02              sta BEEP_P
+                    bp_1:
+E3A8  A9 01                 lda #1
+E3AA  8D 20 80              sta BEEP
+E3AD  20 BA E3              jsr bp_delay
+E3B0  9C 20 80              stz BEEP
+E3B3  20 BA E3              jsr bp_delay
+E3B6  CA                    dex
+E3B7  D0 EF                 bne bp_1
+E3B9  60                    rts
+                    bp_delay:
+E3BA  AC 1E 02              ldy BEEP_P
+                    bp_d1:
+E3BD  88                    dey
+E3BE  D0 FD                 bne bp_d1
+E3C0  60                    rts
+                    
+                    ; ===================================================================
+                    ; 1行の入力
+                    ; ===================================================================
+                    
+                    ; LINEBUF に1行を読む。LINELEN = 文字数。最後に改行する。A, X を壊す(Y は保存)
+                    ;   文字はカーソルの位置に入る(挿入)
+                    ;   ← → カーソルを動かす  DEL カーソルの前の1文字を消す  ↑ 直前の行を呼び出す
+                    ;   RET 確定(カーソルがどこにあっても行全体)
+                    getline:
+E3C1  5A                    phy
+E3C2  9C 50 02              stz LINELEN
+E3C5  9C 1F 02              stz LINEPOS
+E3C8  80 0D                 bra gl_key
+                    
+                    ; LINEBUF に入っている LINELEN 文字を表示して、続きを入力する(BASIC の EDIT)
+                    getline_edit:
+E3CA  5A                    phy
+E3CB  AD 50 02              lda LINELEN
+E3CE  8D 1F 02              sta LINEPOS
+E3D1  A2 00                 ldx #0
+E3D3  18                    clc
+E3D4  20 C6 E4              jsr gl_tail             ; 全部を表示する(カーソルは行の終わり)
+                    gl_key:
+E3D7  20 26 E2              jsr getkey
+E3DA  C9 0D                 cmp #K_RET
+E3DC  D0 03                 bne glk_1
+E3DE  4C 93 E4              jmp gl_ret
+                    glk_1:
+E3E1  C9 08                 cmp #K_DEL
+E3E3  F0 3A                 beq gl_del
+E3E5  C9 11                 cmp #K_LEFT
+E3E7  F0 60                 beq gl_left
+E3E9  C9 12                 cmp #K_RIGHT
+E3EB  F0 6B                 beq gl_right
+E3ED  C9 13                 cmp #K_UP
+E3EF  F0 78                 beq gl_hist
+E3F1  C9 20                 cmp #$20
+E3F3  90 E2                 bcc gl_key
+E3F5  C9 7F                 cmp #$7F
+E3F7  B0 DE                 bcs gl_key
+                            ; カーソルの位置に1文字入れる
+E3F9  AE 50 02              ldx LINELEN
+E3FC  E0 3A                 cpx #LINEMAX
+E3FE  B0 D7                 bcs gl_key
+E400  48                    pha
+                    gli_1:
+E401  EC 1F 02              cpx LINEPOS
+E404  F0 09                 beq gli_2
+E406  BD FF 02              lda LINEBUF-1,X
+E409  9D 00 03              sta LINEBUF,X
+E40C  CA                    dex
+E40D  80 F2                 bra gli_1
+                    gli_2:
+E40F  68                    pla
+E410  9D 00 03              sta LINEBUF,X
+E413  EE 50 02              inc LINELEN
+E416  EE 1F 02              inc LINEPOS
+E419  18                    clc
+E41A  20 C6 E4              jsr gl_tail             ; 入れた文字から後ろを描き直す
+E41D  80 B8                 bra gl_key
+                    gl_del:
+E41F  AE 1F 02              ldx LINEPOS
+E422  F0 B3                 beq gl_key
+E424  20 F5 E4              jsr cur_left
+E427  B0 AE                 bcs gl_key              ; 行の頭が画面の上に出ていて戻れない
+E429  CE 1F 02              dec LINEPOS
+E42C  AE 1F 02              ldx LINEPOS
+                    gld_1:
+E42F  E8                    inx
+E430  EC 50 02              cpx LINELEN
+E433  B0 08                 bcs gld_2
+E435  BD 00 03              lda LINEBUF,X
+E438  9D FF 02              sta LINEBUF-1,X
+E43B  80 F2                 bra gld_1
+                    gld_2:
+E43D  CE 50 02              dec LINELEN
+E440  AE 1F 02              ldx LINEPOS
+E443  38                    sec
+E444  20 C6 E4              jsr gl_tail             ; 後ろを描き直し、最後の1文字ぶんを消す
+E447  80 8E                 bra gl_key
+                    gl_left:
+E449  AD 1F 02              lda LINEPOS
+E44C  F0 18                 beq glk_j
+E44E  20 F5 E4              jsr cur_left
+E451  B0 13                 bcs glk_j
+E453  CE 1F 02              dec LINEPOS
+E456  80 0E                 bra glk_j
+                    gl_right:
+E458  AD 1F 02              lda LINEPOS
+E45B  CD 50 02              cmp LINELEN
+E45E  B0 06                 bcs glk_j
+E460  20 0B E5              jsr cur_right
+E463  EE 1F 02              inc LINEPOS
+                    glk_j:
+E466  4C D7 E3              jmp gl_key
+                    gl_hist:
+E469  20 B5 E4              jsr gl_end
+E46C  AE 50 02              ldx LINELEN             ; いまの入力を消す
+E46F  F0 08                 beq glh_2
+                    glh_1:
+E471  A9 08                 lda #K_DEL
+E473  20 4A E2              jsr putc
+E476  CA                    dex
+E477  D0 F8                 bne glh_1
+                    glh_2:
+E479  EC 51 02              cpx HISTLEN
+E47C  F0 0C                 beq glh_3
+E47E  BD 40 03              lda HISTBUF,X
+E481  9D 00 03              sta LINEBUF,X
+E484  20 18 E5              jsr echo
+E487  E8                    inx
+E488  80 EF                 bra glh_2
+                    glh_3:
+E48A  8E 50 02              stx LINELEN
+E48D  8E 1F 02              stx LINEPOS
+E490  4C D7 E3              jmp gl_key
+                    gl_ret:
+E493  20 B5 E4              jsr gl_end
+E496  AE 50 02              ldx LINELEN
+E499  F0 0C                 beq glr_2
+E49B  8E 51 02              stx HISTLEN
+                    glr_1:
+E49E  BD FF 02              lda LINEBUF-1,X
+E4A1  9D 3F 03              sta HISTBUF-1,X
+E4A4  CA                    dex
+E4A5  D0 F7                 bne glr_1
+                    glr_2:
+                            ; 右端で折り返した直後でなければ改行する
+E4A7  A5 EE                 lda cur_x
+E4A9  D0 05                 bne glr_nl
+E4AB  AD 50 02              lda LINELEN
+E4AE  D0 03                 bne glr_done
+                    glr_nl:
+E4B0  20 98 E2              jsr newline
+                    glr_done:
+E4B3  7A                    ply
+E4B4  60                    rts
+                    
+                    ; カーソルを行の終わりへ動かす
+                    gl_end:
+E4B5  AD 1F 02              lda LINEPOS
+E4B8  CD 50 02              cmp LINELEN
+E4BB  B0 08                 bcs gle_done
+E4BD  20 0B E5              jsr cur_right
+E4C0  EE 1F 02              inc LINEPOS
+E4C3  80 F0                 bra gl_end
+                    gle_done:
+E4C5  60                    rts
+                    
+                    ; LINEBUF の X 文字目から終わりまでを描き、C=1 なら続けて1文字ぶん消す。
+                    ; その後、カーソルを LINEPOS 文字目に戻す。行の頭が画面の上に出ていて戻りきれないときは、
+                    ; LINEPOS を戻れたところに合わせる。A, X を壊す
+                    gl_tail:
+E4C6  08                    php
+                    glt_1:
+E4C7  EC 50 02              cpx LINELEN
+E4CA  F0 09                 beq glt_2
+E4CC  BD 00 03              lda LINEBUF,X
+E4CF  20 18 E5              jsr echo
+E4D2  E8                    inx
+E4D3  80 F2                 bra glt_1
+                    glt_2:
+E4D5  28                    plp
+E4D6  90 0A                 bcc glt_3
+E4D8  A9 20                 lda #' '                ; カーソルの位置の文字を消す(カーソルは動かない)
+E4DA  20 4A E2              jsr putc
+E4DD  A9 08                 lda #K_DEL
+E4DF  20 4A E2              jsr putc
+                    glt_3:
+E4E2  EC 1F 02              cpx LINEPOS
+E4E5  F0 0D                 beq glt_5
+E4E7  20 F5 E4              jsr cur_left
+E4EA  B0 03                 bcs glt_4
+E4EC  CA                    dex
+E4ED  80 F3                 bra glt_3
+                    glt_4:
+E4EF  EE 1F 02              inc LINEPOS
+E4F2  80 EE                 bra glt_3
+                    glt_5:
+E4F4  60                    rts
+                    
+                    ; カーソルを1文字左へ(行の頭なら上の行の右端へ)。左上で動けなければ C=1。A を壊す
+                    cur_left:
+E4F5  A5 EE                 lda cur_x
+E4F7  F0 04                 beq cl_up
+E4F9  C6 EE                 dec cur_x
+E4FB  18                    clc
+E4FC  60                    rts
+                    cl_up:
+E4FD  A5 EF                 lda cur_y
+E4FF  F0 08                 beq cl_fail
+E501  C6 EF                 dec cur_y
+E503  A9 0F                 lda #COLS-1
+E505  85 EE                 sta cur_x
+E507  18                    clc
+E508  60                    rts
+                    cl_fail:
+E509  38                    sec
+E50A  60                    rts
+                    
+                    ; カーソルを1文字右へ(右端を越えたら次の行の頭へ)。表示してある範囲の中だけで使う。A を壊す
+                    cur_right:
+E50B  E6 EE                 inc cur_x
+E50D  A5 EE                 lda cur_x
+E50F  C9 10                 cmp #COLS
+E511  90 04                 bcc cr_done
+E513  64 EE                 stz cur_x
+E515  E6 EF                 inc cur_y
+                    cr_done:
+E517  60                    rts
+                    
+                    ; 入力した文字を表示し、右端に来たらすぐ次の行へ移る(カーソルが見えるように)
+                    echo:
+E518  20 4A E2              jsr putc
+E51B  A5 EE                 lda cur_x
+E51D  C9 10                 cmp #COLS
+E51F  90 05                 bcc echo_done
+E521  DA                    phx
+E522  20 98 E2              jsr newline
+E525  FA                    plx
+                    echo_done:
+E526  60                    rts
+                    
+                    ; ===================================================================
+                    ; モニター本体
+                    ; ===================================================================
+                    
+                    mon_restart:
+E527  AE 69 02              ldx MON_SP
+E52A  9A                    txs
+E52B  D8                    cld
+E52C  A9 01                 lda #1
+E52E  8D 6A 02              sta MON_ACTIVE
+E531  9C 6C 02              stz RUN_MODE
+E534  20 4C E3              jsr cursor_off
+E537  A9 81                 lda #$81
+E539  8D 10 80              sta TIMER_CTRL
+E53C  9C 31 80              stz TAPE_CTRL           ; BREAK でテープの途中から戻ったときのため
+E53F  A9 01                 lda #ANN_BUSY
+E541  1C 02 80              trb LCD_ANN
+E544  58                    cli
+                    mon_loop:
+E545  20 54 E3              jsr crlf_if
+E548  A9 2A                 lda #'*'
+E54A  20 4A E2              jsr putc
+E54D  20 C1 E3              jsr getline
+E550  20 67 E5              jsr exec_line
+E553  80 F0                 bra mon_loop
+                    
+                    ; エラー: "?" を表示してビープを鳴らし、プロンプトに戻る
+                    error:
+E555  20 54 E3              jsr crlf_if
+E558  A9 3F                 lda #'?'
+E55A  20 4A E2              jsr putc
+                    err_beep:
+E55D  A9 64                 lda #100
+E55F  A2 50                 ldx #80
+E561  20 A5 E3              jsr sound
+E564  4C 27 E5              jmp mon_restart
+                    
+                    ; 入力行を実行する
+                    exec_line:
+E567  64 F4                 stz lp
+E569  20 DA E5              jsr skipsp
+E56C  20 BC E5              jsr peek
+E56F  F0 17                 beq ex_done
+E571  E6 F4                 inc lp
+E573  A2 00                 ldx #0
+                    ex_find:
+E575  DD 89 E5              cmp cmd_chars,X
+E578  F0 08                 beq ex_found
+E57A  E8                    inx
+E57B  E0 11                 cpx #cmd_addrs-cmd_chars
+E57D  D0 F6                 bne ex_find
+E57F  4C 55 E5              jmp error
+                    ex_found:
+E582  8A                    txa
+E583  0A                    asl
+E584  AA                    tax
+E585  7C 9A E5              jmp (cmd_addrs,X)
+                    ex_done:
+E588  60                    rts
+                    
+                    cmd_chars:
+E589  44 45 46 4D +         .byte "DEFMSCGRHUBTPWLAQ"
+                    cmd_addrs:
+E59A  E4 E6 7F E7 +         .word cmd_d, cmd_e, cmd_f, cmd_m, cmd_s, cmd_c, cmd_g, cmd_r, cmd_h, cmd_u, cmd_b, cmd_t, cmd_p
+E5B4  CB F0 33 F1 +         .word cmd_w, cmd_l, cmd_a, cmd_q
+                    
+                    ; ---- 入力行の解析 ----
+                    
+                    ; A = いまの文字(英小文字は大文字に)。行の終わりなら A=0。Z は A に従う。Y を壊す
+                    peek:
+E5BC  A4 F4                 ldy lp
+E5BE  CC 50 02              cpy LINELEN
+E5C1  B0 09                 bcs pk_end
+E5C3  B9 00 03              lda LINEBUF,Y
+E5C6  20 CF E5              jsr toupper
+E5C9  09 00                 ora #0
+E5CB  60                    rts
+                    pk_end:
+E5CC  A9 00                 lda #0
+E5CE  60                    rts
+                    
+                    toupper:
+E5CF  C9 61                 cmp #'a'
+E5D1  90 06                 bcc tu_done
+E5D3  C9 7B                 cmp #'z'+1
+E5D5  B0 02                 bcs tu_done
+E5D7  29 DF                 and #$DF
+                    tu_done:
+E5D9  60                    rts
+                    
+                    ; 空白とカンマを飛ばす
+                    skipsp:
+E5DA  20 BC E5              jsr peek
+E5DD  C9 20                 cmp #' '
+E5DF  F0 04                 beq ssp_1
+E5E1  C9 2C                 cmp #','
+E5E3  D0 04                 bne ssp_done
+                    ssp_1:
+E5E5  E6 F4                 inc lp
+E5E7  80 F1                 bra skipsp
+                    ssp_done:
+E5E9  60                    rts
+                    
+                    ; A が16進数の数字なら C=0、A = 値。そうでなければ C=1
+                    hexval:
+E5EA  C9 30                 cmp #'0'
+E5EC  90 14                 bcc hv_no
+E5EE  C9 3A                 cmp #'9'+1
+E5F0  90 0C                 bcc hv_dig
+E5F2  C9 41                 cmp #'A'
+E5F4  90 0C                 bcc hv_no
+E5F6  C9 47                 cmp #'F'+1
+E5F8  B0 08                 bcs hv_no
+E5FA  E9 36                 sbc #'A'-11             ; C=0 なので A-'A'+10
+E5FC  18                    clc
+E5FD  60                    rts
+                    hv_dig:
+E5FE  E9 2F                 sbc #'0'-1              ; C=0 なので A-'0'
+E600  18                    clc
+E601  60                    rts
+                    hv_no:
+E602  38                    sec
+E603  60                    rts
+                    
+                    ; 16進数を読んで num に入れる。数字がなければ C=1
+                    gethex:
+E604  20 DA E5              jsr skipsp
+E607  64 E4                 stz num
+E609  64 E5                 stz num+1
+E60B  64 F5                 stz tmp
+                    gh_1:
+E60D  20 BC E5              jsr peek
+E610  20 EA E5              jsr hexval
+E613  B0 13                 bcs gh_end
+E615  E6 F4                 inc lp
+E617  A2 04                 ldx #4
+                    gh_2:
+E619  06 E4                 asl num
+E61B  26 E5                 rol num+1
+E61D  CA                    dex
+E61E  D0 F9                 bne gh_2
+E620  05 E4                 ora num
+E622  85 E4                 sta num
+E624  E6 F5                 inc tmp
+E626  80 E5                 bra gh_1
+                    gh_end:
+E628  A5 F5                 lda tmp
+E62A  F0 02                 beq gh_fail
+E62C  18                    clc
+E62D  60                    rts
+                    gh_fail:
+E62E  38                    sec
+E62F  60                    rts
+                    
+                    ; 16進数が必ずある
+                    need_hex:
+E630  20 04 E6              jsr gethex
+E633  B0 01                 bcs nh_err
+E635  60                    rts
+                    nh_err:
+E636  4C 55 E5              jmp error
+                    
+                    ; 16進数を読んでゼロページ X, X+1 に入れる
+                    arg_x:
+E639  DA                    phx
+E63A  20 30 E6              jsr need_hex
+E63D  FA                    plx
+E63E  A5 E4                 lda num
+E640  95 00                 sta 0,X
+E642  A5 E5                 lda num+1
+E644  95 01                 sta 1,X
+E646  60                    rts
+                    
+                    ; 行がここで終わっていなければエラー
+                    need_end:
+E647  20 DA E5              jsr skipsp
+E64A  20 BC E5              jsr peek
+E64D  D0 E7                 bne nh_err
+E64F  60                    rts
+                    
+                    ; あと引数があれば Z=0
+                    more_args:
+E650  20 DA E5              jsr skipsp
+E653  4C BC E5              jmp peek
+                    
+                    ; バイト列(16進数か "文字列")を BYTEBUF に読む。cnt = 個数(1以上)
+                    getbytes:
+E656  64 F8                 stz cnt
+                    gb_1:
+E658  20 50 E6              jsr more_args
+E65B  F0 29                 beq gb_done
+E65D  C9 22                 cmp #'"'
+E65F  F0 0E                 beq gb_str
+E661  20 30 E6              jsr need_hex
+E664  A5 E5                 lda num+1
+E666  D0 2F                 bne gb_err
+E668  A5 E4                 lda num
+E66A  20 8B E6              jsr gb_put
+E66D  80 E9                 bra gb_1
+                    gb_str:
+E66F  E6 F4                 inc lp
+                    gb_s1:
+E671  A4 F4                 ldy lp
+E673  CC 50 02              cpy LINELEN
+E676  B0 E0                 bcs gb_1                ; 閉じていなくてもよい
+E678  B9 00 03              lda LINEBUF,Y           ; 大文字にしない
+E67B  E6 F4                 inc lp
+E67D  C9 22                 cmp #'"'
+E67F  F0 D7                 beq gb_1
+E681  20 8B E6              jsr gb_put
+E684  80 EB                 bra gb_s1
+                    gb_done:
+E686  A5 F8                 lda cnt
+E688  F0 0D                 beq gb_err
+E68A  60                    rts
+                    gb_put:
+E68B  A6 F8                 ldx cnt
+E68D  E0 10                 cpx #16
+E68F  B0 06                 bcs gb_err
+E691  9D 52 02              sta BYTEBUF,X
+E694  E6 F8                 inc cnt
+E696  60                    rts
+                    gb_err:
+E697  4C 55 E5              jmp error
+                    
+                    ; 開始 a1 と終了 a2 を読み、a2 >= a1 を確かめる
+                    get_range:
+E69A  A2 E6                 ldx #a1
+E69C  20 39 E6              jsr arg_x
+E69F  A2 E8                 ldx #a2
+E6A1  20 39 E6              jsr arg_x
+E6A4  A5 E8                 lda a2
+E6A6  C5 E6                 cmp a1
+E6A8  A5 E9                 lda a2+1
+E6AA  E5 E7                 sbc a1+1
+E6AC  90 E9                 bcc gb_err
+E6AE  60                    rts
+                    
+                    ; a1 が a2 なら C=1。そうでなければ a1 を1進めて C=0
+                    a1_step:
+E6AF  A5 E6                 lda a1
+E6B1  C5 E8                 cmp a2
+E6B3  D0 08                 bne a1s_inc
+E6B5  A5 E7                 lda a1+1
+E6B7  C5 E9                 cmp a2+1
+E6B9  D0 02                 bne a1s_inc
+E6BB  38                    sec
+E6BC  60                    rts
+                    a1s_inc:
+E6BD  E6 E6                 inc a1
+E6BF  D0 02                 bne a1s_done
+E6C1  E6 E7                 inc a1+1
+                    a1s_done:
+E6C3  18                    clc
+E6C4  60                    rts
+                    
+                    ; アドレスを3つずつ並べて表示する(tmp2 が数を数える)
+                    praddr3:
+E6C5  20 7F E3              jsr prhex16
+E6C8  E6 F6                 inc tmp2
+E6CA  A5 F6                 lda tmp2
+E6CC  C9 03                 cmp #3
+E6CE  D0 05                 bne pa3_sp
+E6D0  64 F6                 stz tmp2
+E6D2  4C 58 E3              jmp crlf
+                    pa3_sp:
+E6D5  4C 5E E3              jmp prspace
+                    
+                    ; ページ送りのキー以外で抜けたとき、文字キーなら次の入力の1文字目にする
+                    unget:
+E6D8  C9 21                 cmp #'!'
+E6DA  90 07                 bcc ug_done
+E6DC  C9 7F                 cmp #$7F
+E6DE  B0 03                 bcs ug_done
+E6E0  8D 1D 02              sta UNGOT
+                    ug_done:
+E6E3  60                    rts
+                    
+                    ; ===================================================================
+                    ; D [番地]  メモリダンプ(↓↑で4バイト、RET/SPACE で16バイト進む)
+                    ; ===================================================================
+                    cmd_d:
+E6E4  20 50 E6              jsr more_args
+E6E7  F0 0A                 beq d_cont
+E6E9  A2 E6                 ldx #a1
+E6EB  20 39 E6              jsr arg_x
+E6EE  20 47 E6              jsr need_end
+E6F1  80 0A                 bra d_draw
+                    d_cont:
+E6F3  AD 84 02              lda DNEXT
+E6F6  85 E6                 sta a1
+E6F8  AD 85 02              lda DNEXT+1
+E6FB  85 E7                 sta a1+1
+                    d_draw:
+E6FD  A9 0C                 lda #K_CLS
+E6FF  20 4A E2              jsr putc
+E702  A5 E6                 lda a1
+E704  85 E0                 sta ptr
+E706  A5 E7                 lda a1+1
+E708  85 E1                 sta ptr+1
+E70A  A2 E0                 ldx #ptr
+E70C  20 5F E7              jsr dump_line
+E70F  20 58 E3              jsr crlf
+E712  20 5F E7              jsr dump_line
+E715  20 58 E3              jsr crlf
+E718  20 5F E7              jsr dump_line
+E71B  20 58 E3              jsr crlf
+E71E  20 5F E7              jsr dump_line
+E721  20 26 E2              jsr getkey
+E724  A2 04                 ldx #4
+E726  C9 14                 cmp #K_DOWN
+E728  F0 1B                 beq d_fwd
+E72A  A2 10                 ldx #16
+E72C  C9 0D                 cmp #K_RET
+E72E  F0 15                 beq d_fwd
+E730  C9 20                 cmp #' '
+E732  F0 11                 beq d_fwd
+E734  C9 13                 cmp #K_UP
+E736  D0 19                 bne d_exit
+E738  38                    sec
+E739  A5 E6                 lda a1
+E73B  E9 04                 sbc #4
+E73D  85 E6                 sta a1
+E73F  B0 BC                 bcs d_draw
+E741  C6 E7                 dec a1+1
+E743  80 B8                 bra d_draw
+                    d_fwd:
+E745  8A                    txa
+E746  18                    clc
+E747  65 E6                 adc a1
+E749  85 E6                 sta a1
+E74B  90 B0                 bcc d_draw
+E74D  E6 E7                 inc a1+1
+E74F  80 AC                 bra d_draw
+                    d_exit:
+E751  20 D8 E6              jsr unget
+E754  A5 E0                 lda ptr
+E756  8D 84 02              sta DNEXT
+E759  A5 E1                 lda ptr+1
+E75B  8D 85 02              sta DNEXT+1
+E75E  60                    rts
+                    
+                    ; "AAAA bb bb bb bb" を表示して ptr を4進める
+                    dump_line:
+E75F  A2 E0                 ldx #ptr
+E761  20 7F E3              jsr prhex16
+E764  A0 00                 ldy #0
+                    dl_1:
+E766  20 5E E3              jsr prspace
+E769  B1 E0                 lda (ptr),Y
+E76B  20 63 E3              jsr prhex8
+E76E  C8                    iny
+E76F  C0 04                 cpy #4
+E771  D0 F3                 bne dl_1
+E773  A5 E0                 lda ptr
+E775  18                    clc
+E776  69 04                 adc #4
+E778  85 E0                 sta ptr
+E77A  90 02                 bcc dl_2
+E77C  E6 E1                 inc ptr+1
+                    dl_2:
+E77E  60                    rts
+                    
+                    ; ===================================================================
+                    ; E 番地 [値 ...]  メモリに書き込む。値がなければ1バイトずつ編集する
+                    ; ===================================================================
+                    cmd_e:
+E77F  A2 E6                 ldx #a1
+E781  20 39 E6              jsr arg_x
+E784  20 50 E6              jsr more_args
+E787  F0 10                 beq e_inter
+E789  20 56 E6              jsr getbytes
+E78C  A0 00                 ldy #0
+                    e_wr:
+E78E  B9 52 02              lda BYTEBUF,Y
+E791  91 E6                 sta (a1),Y
+E793  C8                    iny
+E794  C4 F8                 cpy cnt
+E796  D0 F6                 bne e_wr
+E798  60                    rts
+                    
+                    ; 1バイトずつ: "AAAA vv-" の後に16進数を打つ
+                    ;   SPACE, ↓ 次へ  ↑ 前へ  RET 終わり  DEL, ← 1桁消す
+                    e_inter:
+                    e_line:
+E799  A2 E6                 ldx #a1
+E79B  20 7F E3              jsr prhex16
+E79E  20 5E E3              jsr prspace
+E7A1  B2 E6                 lda (a1)
+E7A3  20 63 E3              jsr prhex8
+E7A6  A9 2D                 lda #'-'
+E7A8  20 4A E2              jsr putc
+E7AB  64 F8                 stz cnt
+E7AD  64 F6                 stz tmp2
+                    e_key:
+E7AF  20 26 E2              jsr getkey
+E7B2  20 CF E5              jsr toupper
+E7B5  48                    pha
+E7B6  20 EA E5              jsr hexval
+E7B9  B0 1D                 bcs e_nothex
+E7BB  A6 F8                 ldx cnt
+E7BD  E0 02                 cpx #2
+E7BF  B0 14                 bcs e_skip
+E7C1  85 F5                 sta tmp
+E7C3  A5 F6                 lda tmp2
+E7C5  0A                    asl
+E7C6  0A                    asl
+E7C7  0A                    asl
+E7C8  0A                    asl
+E7C9  05 F5                 ora tmp
+E7CB  85 F6                 sta tmp2
+E7CD  E6 F8                 inc cnt
+E7CF  68                    pla
+E7D0  20 4A E2              jsr putc
+E7D3  80 DA                 bra e_key
+                    e_skip:
+E7D5  68                    pla
+E7D6  80 D7                 bra e_key
+                    e_nothex:
+E7D8  68                    pla
+E7D9  C9 08                 cmp #K_DEL
+E7DB  F0 17                 beq e_del
+E7DD  C9 11                 cmp #K_LEFT
+E7DF  F0 13                 beq e_del
+E7E1  C9 20                 cmp #' '
+E7E3  F0 24                 beq e_next
+E7E5  C9 14                 cmp #K_DOWN
+E7E7  F0 20                 beq e_next
+E7E9  C9 13                 cmp #K_UP
+E7EB  F0 27                 beq e_prev
+E7ED  C9 0D                 cmp #K_RET
+E7EF  D0 BE                 bne e_key
+E7F1  4C 25 E8              jmp e_store
+                    e_del:
+E7F4  A5 F8                 lda cnt
+E7F6  F0 B7                 beq e_key
+E7F8  C6 F8                 dec cnt
+E7FA  46 F6                 lsr tmp2
+E7FC  46 F6                 lsr tmp2
+E7FE  46 F6                 lsr tmp2
+E800  46 F6                 lsr tmp2
+E802  A9 08                 lda #K_DEL
+E804  20 4A E2              jsr putc
+E807  80 A6                 bra e_key
+                    e_next:
+E809  20 25 E8              jsr e_store
+E80C  E6 E6                 inc a1
+E80E  D0 0F                 bne e_nl
+E810  E6 E7                 inc a1+1
+E812  80 0B                 bra e_nl
+                    e_prev:
+E814  20 25 E8              jsr e_store
+E817  A5 E6                 lda a1
+E819  D0 02                 bne e_p1
+E81B  C6 E7                 dec a1+1
+                    e_p1:
+E81D  C6 E6                 dec a1
+                    e_nl:
+E81F  20 58 E3              jsr crlf
+E822  4C 99 E7              jmp e_line
+                    e_store:
+E825  A5 F8                 lda cnt
+E827  F0 04                 beq e_st1
+E829  A5 F6                 lda tmp2
+E82B  92 E6                 sta (a1)
+                    e_st1:
+E82D  60                    rts
+                    
+                    ; ===================================================================
+                    ; F 開始 終了 値 [値 ...]  範囲を値(の並び)で埋める
+                    ; ===================================================================
+                    cmd_f:
+E82E  20 9A E6              jsr get_range
+E831  20 56 E6              jsr getbytes
+E834  A2 00                 ldx #0
+                    f_1:
+E836  BD 52 02              lda BYTEBUF,X
+E839  92 E6                 sta (a1)
+E83B  E8                    inx
+E83C  E4 F8                 cpx cnt
+E83E  D0 02                 bne f_2
+E840  A2 00                 ldx #0
+                    f_2:
+E842  20 AF E6              jsr a1_step
+E845  90 EF                 bcc f_1
+E847  60                    rts
+                    
+                    ; ===================================================================
+                    ; M 開始 終了 転送先  メモリを転送する(重なっていてもよい)
+                    ; ===================================================================
+                    cmd_m:
+E848  20 9A E6              jsr get_range
+E84B  A2 EA                 ldx #a3
+E84D  20 39 E6              jsr arg_x
+E850  20 47 E6              jsr need_end
+                            ; 転送先が開始より後ろなら後ろから写す
+E853  A5 E6                 lda a1
+E855  C5 EA                 cmp a3
+E857  A5 E7                 lda a1+1
+E859  E5 EB                 sbc a3+1
+E85B  90 10                 bcc m_back
+                    m_fwd:
+E85D  B2 E6                 lda (a1)
+E85F  92 EA                 sta (a3)
+E861  E6 EA                 inc a3
+E863  D0 02                 bne m_f1
+E865  E6 EB                 inc a3+1
+                    m_f1:
+E867  20 AF E6              jsr a1_step
+E86A  90 F1                 bcc m_fwd
+E86C  60                    rts
+                    m_back:
+                            ; ptr = 終了、ptr2 = 転送先 + (終了 - 開始)
+E86D  A5 E8                 lda a2
+E86F  85 E0                 sta ptr
+E871  A5 E9                 lda a2+1
+E873  85 E1                 sta ptr+1
+E875  38                    sec
+E876  A5 E8                 lda a2
+E878  E5 E6                 sbc a1
+E87A  85 E2                 sta ptr2
+E87C  A5 E9                 lda a2+1
+E87E  E5 E7                 sbc a1+1
+E880  85 E3                 sta ptr2+1
+E882  18                    clc
+E883  A5 E2                 lda ptr2
+E885  65 EA                 adc a3
+E887  85 E2                 sta ptr2
+E889  A5 E3                 lda ptr2+1
+E88B  65 EB                 adc a3+1
+E88D  85 E3                 sta ptr2+1
+                    m_b1:
+E88F  B2 E0                 lda (ptr)
+E891  92 E2                 sta (ptr2)
+E893  A5 E0                 lda ptr
+E895  C5 E6                 cmp a1
+E897  D0 06                 bne m_b2
+E899  A5 E1                 lda ptr+1
+E89B  C5 E7                 cmp a1+1
+E89D  F0 12                 beq m_done
+                    m_b2:
+E89F  A5 E0                 lda ptr
+E8A1  D0 02                 bne m_b3
+E8A3  C6 E1                 dec ptr+1
+                    m_b3:
+E8A5  C6 E0                 dec ptr
+E8A7  A5 E2                 lda ptr2
+E8A9  D0 02                 bne m_b4
+E8AB  C6 E3                 dec ptr2+1
+                    m_b4:
+E8AD  C6 E2                 dec ptr2
+E8AF  80 DE                 bra m_b1
+                    m_done:
+E8B1  60                    rts
+                    
+                    ; ===================================================================
+                    ; S 開始 終了 値 [値 ...]  バイト列を探す
+                    ; ===================================================================
+                    cmd_s:
+E8B2  20 9A E6              jsr get_range
+E8B5  20 56 E6              jsr getbytes
+E8B8  64 F6                 stz tmp2
+                    s_1:
+E8BA  A0 00                 ldy #0
+                    s_2:
+E8BC  B1 E6                 lda (a1),Y
+E8BE  D9 52 02              cmp BYTEBUF,Y
+E8C1  D0 0A                 bne s_next
+E8C3  C8                    iny
+E8C4  C4 F8                 cpy cnt
+E8C6  D0 F4                 bne s_2
+E8C8  A2 E6                 ldx #a1
+E8CA  20 C5 E6              jsr praddr3
+                    s_next:
+E8CD  20 AF E6              jsr a1_step
+E8D0  90 E8                 bcc s_1
+E8D2  60                    rts
+                    
+                    ; ===================================================================
+                    ; C 開始 終了 比較先  2つの範囲を比べ、違うところを表示する
+                    ; ===================================================================
+                    cmd_c:
+E8D3  20 9A E6              jsr get_range
+E8D6  A2 EA                 ldx #a3
+E8D8  20 39 E6              jsr arg_x
+E8DB  20 47 E6              jsr need_end
+                    c_1:
+E8DE  B2 E6                 lda (a1)
+E8E0  D2 EA                 cmp (a3)
+E8E2  F0 20                 beq c_next
+E8E4  A2 E6                 ldx #a1                 ; "AAAA bb AAAA bb"
+E8E6  20 7F E3              jsr prhex16
+E8E9  20 5E E3              jsr prspace
+E8EC  B2 E6                 lda (a1)
+E8EE  20 63 E3              jsr prhex8
+E8F1  20 5E E3              jsr prspace
+E8F4  A2 EA                 ldx #a3
+E8F6  20 7F E3              jsr prhex16
+E8F9  20 5E E3              jsr prspace
+E8FC  B2 EA                 lda (a3)
+E8FE  20 63 E3              jsr prhex8
+E901  20 58 E3              jsr crlf
+                    c_next:
+E904  E6 EA                 inc a3
+E906  D0 02                 bne c_2
+E908  E6 EB                 inc a3+1
+                    c_2:
+E90A  20 AF E6              jsr a1_step
+E90D  90 CF                 bcc c_1
+E90F  60                    rts
+                    
+                    ; ===================================================================
+                    ; H 値1 値2  和と差
+                    ; ===================================================================
+                    cmd_h:
+E910  A2 E6                 ldx #a1
+E912  20 39 E6              jsr arg_x
+E915  A2 E8                 ldx #a2
+E917  20 39 E6              jsr arg_x
+E91A  20 47 E6              jsr need_end
+E91D  18                    clc
+E91E  A5 E6                 lda a1
+E920  65 E8                 adc a2
+E922  85 E4                 sta num
+E924  A5 E7                 lda a1+1
+E926  65 E9                 adc a2+1
+E928  85 E5                 sta num+1
+E92A  A2 E4                 ldx #num
+E92C  20 7F E3              jsr prhex16
+E92F  20 5E E3              jsr prspace
+E932  38                    sec
+E933  A5 E6                 lda a1
+E935  E5 E8                 sbc a2
+E937  85 E4                 sta num
+E939  A5 E7                 lda a1+1
+E93B  E5 E9                 sbc a2+1
+E93D  85 E5                 sta num+1
+E93F  A2 E4                 ldx #num
+E941  4C 7F E3              jmp prhex16
+                    
+                    ; ===================================================================
+                    ; R [レジスタ 値]  レジスタの表示と変更(レジスタは A X Y S P PC)
+                    ; ===================================================================
+                    cmd_r:
+E944  20 50 E6              jsr more_args
+E947  D0 03                 bne r_set
+E949  4C 99 E9              jmp show_regs
+                    r_set:
+E94C  E6 F4                 inc lp
+E94E  A2 02                 ldx #R_A-R_PCL
+E950  C9 41                 cmp #'A'
+E952  F0 1D                 beq r_8
+E954  E8                    inx
+E955  C9 58                 cmp #'X'
+E957  F0 18                 beq r_8
+E959  E8                    inx
+E95A  C9 59                 cmp #'Y'
+E95C  F0 13                 beq r_8
+E95E  A2 06                 ldx #R_S-R_PCL
+E960  C9 53                 cmp #'S'
+E962  F0 0D                 beq r_8
+E964  C9 50                 cmp #'P'
+E966  D0 2E                 bne r_err
+E968  20 BC E5              jsr peek
+E96B  C9 43                 cmp #'C'
+E96D  F0 14                 beq r_pc
+E96F  A2 05                 ldx #R_P-R_PCL
+                    r_8:
+E971  DA                    phx
+E972  20 30 E6              jsr need_hex
+E975  20 47 E6              jsr need_end
+E978  FA                    plx
+E979  A5 E5                 lda num+1
+E97B  D0 19                 bne r_err
+E97D  A5 E4                 lda num
+E97F  9D 62 02              sta R_PCL,X
+E982  60                    rts
+                    r_pc:
+E983  E6 F4                 inc lp
+E985  20 30 E6              jsr need_hex
+E988  20 47 E6              jsr need_end
+E98B  A5 E4                 lda num
+E98D  8D 62 02              sta R_PCL
+E990  A5 E5                 lda num+1
+E992  8D 63 02              sta R_PCH
+E995  60                    rts
+                    r_err:
+E996  4C 55 E5              jmp error
+                    
+                    ; レジスタを3行で表示する
+                    ;   A=00 X=00 Y=00
+                    ;   S=FF P=..-B.I..
+                    ;   0600 LDA #01      (PC の命令)
+                    show_regs:
+E999  20 AC E9              jsr show_regs2
+E99C  20 58 E3              jsr crlf
+E99F  AD 62 02              lda R_PCL
+E9A2  85 EC                 sta daddr
+E9A4  AD 63 02              lda R_PCH
+E9A7  85 ED                 sta daddr+1
+E9A9  4C 55 EA              jmp disline
+                    
+                    show_regs2:
+E9AC  20 89 E3              jsr prinline
+E9AF  41 3D 00              .byte "A=", 0
+E9B2  AD 64 02              lda R_A
+E9B5  20 63 E3              jsr prhex8
+E9B8  20 89 E3              jsr prinline
+E9BB  20 58 3D 00           .byte " X=", 0
+E9BF  AD 65 02              lda R_X
+E9C2  20 63 E3              jsr prhex8
+E9C5  20 89 E3              jsr prinline
+E9C8  20 59 3D 00           .byte " Y=", 0
+E9CC  AD 66 02              lda R_Y
+E9CF  20 63 E3              jsr prhex8
+E9D2  20 58 E3              jsr crlf
+E9D5  20 89 E3              jsr prinline
+E9D8  53 3D 00              .byte "S=", 0
+E9DB  AD 68 02              lda R_S
+E9DE  20 63 E3              jsr prhex8
+E9E1  20 89 E3              jsr prinline
+E9E4  20 50 3D 00           .byte " P=", 0
+E9E8  AD 67 02              lda R_P
+E9EB  85 F5                 sta tmp
+E9ED  A2 00                 ldx #0
+                    sr_1:
+E9EF  BD 05 EA              lda flag_names,X
+E9F2  06 F5                 asl tmp
+E9F4  B0 06                 bcs sr_2
+E9F6  E0 02                 cpx #2                  ; bit5 はいつも "-"
+E9F8  F0 02                 beq sr_2
+E9FA  A9 2E                 lda #'.'
+                    sr_2:
+E9FC  20 4A E2              jsr putc
+E9FF  E8                    inx
+EA00  E0 08                 cpx #8
+EA02  D0 EB                 bne sr_1
+EA04  60                    rts
+                    
+                    flag_names:
+EA05  4E 56 2D 42 +         .byte "NV-BDIZC"
+                    
+                    ; ===================================================================
+                    ; U [番地]  逆アセンブル(↓で1行、RET/SPACE で4行進む)
+                    ; ===================================================================
+                    cmd_u:
+EA0D  20 50 E6              jsr more_args
+EA10  F0 0A                 beq u_cont
+EA12  A2 EC                 ldx #daddr
+EA14  20 39 E6              jsr arg_x
+EA17  20 47 E6              jsr need_end
+EA1A  80 0A                 bra u_go
+                    u_cont:
+EA1C  AD 86 02              lda UNEXT
+EA1F  85 EC                 sta daddr
+EA21  AD 87 02              lda UNEXT+1
+EA24  85 ED                 sta daddr+1
+                    u_go:
+EA26  20 55 EA              jsr disline
+EA29  A2 03                 ldx #3
+                    u_more:
+EA2B  20 58 E3              jsr crlf
+EA2E  20 55 EA              jsr disline
+EA31  CA                    dex
+EA32  D0 F7                 bne u_more
+                    u_key:
+EA34  20 26 E2              jsr getkey
+EA37  A2 01                 ldx #1
+EA39  C9 14                 cmp #K_DOWN
+EA3B  F0 EE                 beq u_more
+EA3D  A2 04                 ldx #4
+EA3F  C9 0D                 cmp #K_RET
+EA41  F0 E8                 beq u_more
+EA43  C9 20                 cmp #' '
+EA45  F0 E4                 beq u_more
+EA47  20 D8 E6              jsr unget
+EA4A  A5 EC                 lda daddr
+EA4C  8D 86 02              sta UNEXT
+EA4F  A5 ED                 lda daddr+1
+EA51  8D 87 02              sta UNEXT+1
+EA54  60                    rts
+                    
+                    ; daddr の命令を1行表示して daddr を進める。X は保存
+                    ;   "AAAA MNE OPERAND"(数はすべて16進数で $ は付けない)
+                    disline:
+EA55  DA                    phx
+EA56  A2 EC                 ldx #daddr
+EA58  20 7F E3              jsr prhex16
+EA5B  20 5E E3              jsr prspace
+EA5E  B2 EC                 lda (daddr)
+EA60  85 F5                 sta tmp                 ; オペコード
+EA62  AA                    tax
+EA63  BD A3 F8              lda op_mnem,X
+EA66  85 F6                 sta tmp2
+EA68  0A                    asl
+EA69  65 F6                 adc tmp2                ; ×3
+EA6B  AA                    tax
+EA6C  BD A3 FA              lda mnem_text,X
+EA6F  20 4A E2              jsr putc
+EA72  BD A4 FA              lda mnem_text+1,X
+EA75  20 4A E2              jsr putc
+EA78  BD A5 FA              lda mnem_text+2,X
+EA7B  20 4A E2              jsr putc
+                            ; RMB/SMB/BBR/BBS(下位4ビットが7か$F)はビット番号を付ける
+EA7E  A5 F5                 lda tmp
+EA80  29 07                 and #$07
+EA82  C9 07                 cmp #$07
+EA84  D0 0D                 bne dis_1
+EA86  A5 F5                 lda tmp
+EA88  4A                    lsr
+EA89  4A                    lsr
+EA8A  4A                    lsr
+EA8B  4A                    lsr
+EA8C  29 07                 and #7
+EA8E  09 30                 ora #'0'
+EA90  20 4A E2              jsr putc
+                    dis_1:
+EA93  A6 F5                 ldx tmp
+EA95  BD A3 F9              lda op_mode,X
+EA98  AA                    tax
+EA99  BD 9B FB              lda m_kind,X
+EA9C  F0 75                 beq dis_end             ; オペランドなし
+EA9E  20 5E E3              jsr prspace
+EAA1  BD 88 FB              lda m_pre,X
+EAA4  F0 03                 beq dis_2
+EAA6  20 4A E2              jsr putc
+                    dis_2:
+EAA9  BD 9B FB              lda m_kind,X
+EAAC  C9 05                 cmp #5
+EAAE  F0 15                 beq dis_acc
+EAB0  C9 02                 cmp #2
+EAB2  F0 18                 beq dis_word
+EAB4  C9 03                 cmp #3
+EAB6  F0 23                 beq dis_rel
+EAB8  C9 04                 cmp #4
+EABA  F0 2A                 beq dis_zpr
+EABC  A0 01                 ldy #1                  ; 1バイト
+EABE  B1 EC                 lda (daddr),Y
+EAC0  20 63 E3              jsr prhex8
+EAC3  80 36                 bra dis_suf
+                    dis_acc:
+EAC5  A9 41                 lda #'A'
+EAC7  20 4A E2              jsr putc
+EACA  80 2F                 bra dis_suf
+                    dis_word:
+EACC  A0 02                 ldy #2
+EACE  B1 EC                 lda (daddr),Y
+EAD0  20 63 E3              jsr prhex8
+EAD3  88                    dey
+EAD4  B1 EC                 lda (daddr),Y
+EAD6  20 63 E3              jsr prhex8
+EAD9  80 20                 bra dis_suf
+                    dis_rel:
+EADB  A0 01                 ldy #1
+EADD  B1 EC                 lda (daddr),Y
+EADF  A0 02                 ldy #2
+EAE1  20 27 EB              jsr prrel
+EAE4  80 15                 bra dis_suf
+                    dis_zpr:
+EAE6  A0 01                 ldy #1
+EAE8  B1 EC                 lda (daddr),Y
+EAEA  20 63 E3              jsr prhex8
+EAED  A9 2C                 lda #','
+EAEF  20 4A E2              jsr putc
+EAF2  A0 02                 ldy #2
+EAF4  B1 EC                 lda (daddr),Y
+EAF6  A0 03                 ldy #3
+EAF8  20 27 EB              jsr prrel
+                    dis_suf:
+EAFB  BD AE FB              lda m_suf1,X
+EAFE  F0 13                 beq dis_end
+EB00  20 4A E2              jsr putc
+EB03  BD C1 FB              lda m_suf2,X
+EB06  F0 0B                 beq dis_end
+EB08  20 4A E2              jsr putc
+EB0B  BD D4 FB              lda m_suf3,X
+EB0E  F0 03                 beq dis_end
+EB10  20 4A E2              jsr putc
+                    dis_end:
+                            ; daddr += 長さ
+EB13  A6 F5                 ldx tmp
+EB15  BD A3 F9              lda op_mode,X
+EB18  AA                    tax
+EB19  BD 75 FB              lda m_len,X
+EB1C  18                    clc
+EB1D  65 EC                 adc daddr
+EB1F  85 EC                 sta daddr
+EB21  90 02                 bcc dis_ret
+EB23  E6 ED                 inc daddr+1
+                    dis_ret:
+EB25  FA                    plx
+EB26  60                    rts
+                    
+                    ; 分岐先 = daddr + Y + (A を符号付きで) を4桁で表示する。X は保存
+                    prrel:
+EB27  48                    pha
+EB28  98                    tya
+EB29  18                    clc
+EB2A  65 EC                 adc daddr
+EB2C  85 E0                 sta ptr
+EB2E  A5 ED                 lda daddr+1
+EB30  69 00                 adc #0
+EB32  85 E1                 sta ptr+1
+EB34  68                    pla
+EB35  10 02                 bpl prr_1
+EB37  C6 E1                 dec ptr+1
+                    prr_1:
+EB39  18                    clc
+EB3A  65 E0                 adc ptr
+EB3C  85 E0                 sta ptr
+EB3E  90 02                 bcc prr_2
+EB40  E6 E1                 inc ptr+1
+                    prr_2:
+EB42  DA                    phx
+EB43  A2 E0                 ldx #ptr
+EB45  20 7F E3              jsr prhex16
+EB48  FA                    plx
+EB49  60                    rts
+                    
+                    ; ===================================================================
+                    ; B                一覧
+                    ; B 番地           ブレークポイントを置く(4つまで、RAM のみ)
+                    ; B - [番地]       消す(番地がなければ全部)
+                    ; ===================================================================
+                    cmd_b:
+EB4A  20 50 E6              jsr more_args
+EB4D  F0 5C                 beq b_list
+EB4F  C9 2D                 cmp #'-'
+EB51  F0 35                 beq b_del
+EB53  20 30 E6              jsr need_hex
+EB56  20 47 E6              jsr need_end
+EB59  A5 E5                 lda num+1
+EB5B  30 1C                 bmi b_err               ; RAM($0000-$7FFF)だけ
+EB5D  85 E1                 sta ptr+1
+EB5F  A5 E4                 lda num
+EB61  85 E0                 sta ptr
+EB63  20 23 F3              jsr is_prot             ; モニターの使う番地には置けない
+EB66  B0 11                 bcs b_err
+EB68  20 D3 EB              jsr b_find
+EB6B  B0 3E                 bcs b_list              ; すでにある
+EB6D  A2 00                 ldx #0
+                    b_free:
+EB6F  BD 74 02              lda BP_HI,X
+EB72  30 08                 bmi b_put
+EB74  E8                    inx
+EB75  E0 04                 cpx #4
+EB77  D0 F6                 bne b_free
+                    b_err:
+EB79  4C 55 E5              jmp error
+                    b_put:
+EB7C  A5 E4                 lda num
+EB7E  9D 70 02              sta BP_LO,X
+EB81  A5 E5                 lda num+1
+EB83  9D 74 02              sta BP_HI,X
+EB86  80 23                 bra b_list
+                    b_del:
+EB88  E6 F4                 inc lp
+EB8A  20 50 E6              jsr more_args
+EB8D  F0 12                 beq b_clear
+EB8F  20 30 E6              jsr need_hex
+EB92  20 47 E6              jsr need_end
+EB95  20 D3 EB              jsr b_find
+EB98  90 DF                 bcc b_err
+EB9A  A9 FF                 lda #$FF
+EB9C  9D 74 02              sta BP_HI,X
+EB9F  80 0A                 bra b_list
+                    b_clear:
+EBA1  A9 FF                 lda #$FF
+EBA3  A2 03                 ldx #3
+                    b_c1:
+EBA5  9D 74 02              sta BP_HI,X
+EBA8  CA                    dex
+EBA9  10 FA                 bpl b_c1
+                    b_list:
+EBAB  64 F6                 stz tmp2
+EBAD  64 F8                 stz cnt
+EBAF  A0 00                 ldy #0
+                    b_l1:
+EBB1  B9 74 02              lda BP_HI,Y
+EBB4  30 0E                 bmi b_l2
+EBB6  85 E5                 sta num+1
+EBB8  B9 70 02              lda BP_LO,Y
+EBBB  85 E4                 sta num
+EBBD  A2 E4                 ldx #num
+EBBF  20 C5 E6              jsr praddr3
+EBC2  E6 F8                 inc cnt
+                    b_l2:
+EBC4  C8                    iny
+EBC5  C0 04                 cpy #4
+EBC7  D0 E8                 bne b_l1
+EBC9  A5 F8                 lda cnt
+EBCB  D0 05                 bne b_l3
+EBCD  A9 2D                 lda #'-'
+EBCF  4C 4A E2              jmp putc
+                    b_l3:
+EBD2  60                    rts
+                    
+                    ; num と同じブレークポイントがあれば C=1、X = 番号
+                    b_find:
+EBD3  A2 03                 ldx #3
+                    bf_1:
+EBD5  BD 74 02              lda BP_HI,X
+EBD8  C5 E5                 cmp num+1
+EBDA  D0 07                 bne bf_2
+EBDC  BD 70 02              lda BP_LO,X
+EBDF  C5 E4                 cmp num
+EBE1  F0 05                 beq bf_yes
+                    bf_2:
+EBE3  CA                    dex
+EBE4  10 EF                 bpl bf_1
+EBE6  18                    clc
+EBE7  60                    rts
+                    bf_yes:
+EBE8  38                    sec
+EBE9  60                    rts
+                    
+                    ; ===================================================================
+                    ; A [番地]  1行ずつアセンブルする
+                    ;
+                    ;   番地が出たら命令を1行打つ。書き方は U の表示と同じ(数は16進数、$ は付けても
+                    ;   付けなくてもよい)。何も打たずに RET で終わる。間違えると ? を出して同じ番地で
+                    ;   やり直す。オペランドを2桁以下で書くとゼロページ、3桁以上で書くと絶対番地を選ぶ
+                    ;   (その命令にない方は、もう一方で代わりにする)。分岐命令には分岐先の番地を書く。
+                    ; ===================================================================
+                    
+                    ; オペランドの形
+                    A_CLS_NONE = 0              ; なし
+                    A_CLS_ACC  = 1              ; A
+                    A_CLS_IMM  = 2              ; #v
+                    A_CLS_V    = 3              ; v
+                    A_CLS_VX   = 4              ; v,X
+                    A_CLS_VY   = 5              ; v,Y
+                    A_CLS_IX   = 6              ; (v,X)
+                    A_CLS_IY   = 7              ; (v),Y
+                    A_CLS_I    = 8              ; (v)
+                    A_CLS_ZR   = 9              ; v,w(BBR/BBS)
+                    
+                    cmd_a:
+EBEA  20 50 E6              jsr more_args
+EBED  F0 10                 beq a_go
+EBEF  20 30 E6              jsr need_hex
+EBF2  20 47 E6              jsr need_end
+EBF5  A5 E4                 lda num
+EBF7  8D 8A 02              sta A_ADDR
+EBFA  A5 E5                 lda num+1
+EBFC  8D 8B 02              sta A_ADDR+1
+                    a_go:
+EBFF  AD 8A 02              lda A_ADDR
+EC02  8D 8C 02              sta A_START
+EC05  AD 8B 02              lda A_ADDR+1
+EC08  8D 8D 02              sta A_START+1
+                    a_line:
+EC0B  BA                    tsx
+EC0C  8E 8E 02              stx A_SP
+EC0F  20 54 E3              jsr crlf_if
+EC12  AD 8B 02              lda A_ADDR+1
+EC15  20 63 E3              jsr prhex8
+EC18  AD 8A 02              lda A_ADDR
+EC1B  20 63 E3              jsr prhex8
+EC1E  20 5E E3              jsr prspace
+EC21  20 C1 E3              jsr getline
+EC24  64 F4                 stz lp
+EC26  20 55 EC              jsr a_skip
+EC29  20 BC E5              jsr peek
+EC2C  F0 05                 beq a_done
+EC2E  20 97 EC              jsr asm_one
+EC31  80 D8                 bra a_line
+                    a_done:
+EC33  AD 8C 02              lda A_START             ; 続けて U で確かめられるように
+EC36  8D 86 02              sta UNEXT
+EC39  AD 8D 02              lda A_START+1
+EC3C  8D 87 02              sta UNEXT+1
+EC3F  60                    rts
+                    
+                    ; エラー: ? を出して同じ番地の入力に戻る
+                    a_err:
+EC40  AE 8E 02              ldx A_SP
+EC43  9A                    txs
+EC44  20 54 E3              jsr crlf_if
+EC47  A9 3F                 lda #'?'
+EC49  20 4A E2              jsr putc
+EC4C  A9 64                 lda #100
+EC4E  A2 50                 ldx #80
+EC50  20 A5 E3              jsr sound
+EC53  80 B6                 bra a_line
+                    
+                    ; 空白を飛ばす(カンマは飛ばさない)
+                    a_skip:
+EC55  20 BC E5              jsr peek
+EC58  C9 20                 cmp #' '
+EC5A  D0 04                 bne a_skip_done
+EC5C  E6 F4                 inc lp
+EC5E  80 F5                 bra a_skip
+                    a_skip_done:
+EC60  60                    rts
+                    
+                    ; 行がここで終わっていなければエラー
+                    a_end:
+EC61  20 55 EC              jsr a_skip
+EC64  20 BC E5              jsr peek
+EC67  D0 D7                 bne a_err
+EC69  60                    rts
+                    
+                    ; 16進数を num に読む($ を付けてもよい)。なければエラー。A_LONG も決める
+                    a_num:
+EC6A  20 55 EC              jsr a_skip
+EC6D  20 BC E5              jsr peek
+EC70  C9 24                 cmp #'$'
+EC72  D0 02                 bne a_n1
+EC74  E6 F4                 inc lp
+                    a_n1:
+EC76  20 04 E6              jsr gethex
+EC79  B0 C5                 bcs a_err
+EC7B  9C 92 02              stz A_LONG
+EC7E  A5 F5                 lda tmp                 ; 桁数
+EC80  C9 03                 cmp #3
+EC82  90 03                 bcc a_n2
+EC84  EE 92 02              inc A_LONG
+                    a_n2:
+EC87  60                    rts
+                    
+                    ; A をその文字として読めれば進める。読めなければエラー
+                    a_expect:
+EC88  85 F6                 sta tmp2
+EC8A  20 55 EC              jsr a_skip
+EC8D  20 BC E5              jsr peek
+EC90  C5 F6                 cmp tmp2
+EC92  D0 AC                 bne a_err
+EC94  E6 F4                 inc lp
+EC96  60                    rts
+                    
+                    ; LINEBUF の命令を1つアセンブルして A_ADDR に書き、A_ADDR を進める
+                    asm_one:
+                            ; ---- ニーモニック(英字3文字) ----
+EC97  A2 00                 ldx #0
+                    ao_m1:
+EC99  20 BC E5              jsr peek
+EC9C  C9 41                 cmp #'A'
+EC9E  90 A0                 bcc a_err
+ECA0  C9 5B                 cmp #'Z'+1
+ECA2  B0 9C                 bcs a_err
+ECA4  9D 52 02              sta BYTEBUF,X
+ECA7  E6 F4                 inc lp
+ECA9  E8                    inx
+ECAA  E0 03                 cpx #3
+ECAC  D0 EB                 bne ao_m1
+ECAE  A2 00                 ldx #0                  ; X = 表の位置、A_MNEM = 番号
+ECB0  9C 8F 02              stz A_MNEM
+                    ao_m2:
+ECB3  BD A3 FA              lda mnem_text,X
+ECB6  CD 52 02              cmp BYTEBUF
+ECB9  D0 10                 bne ao_m3
+ECBB  BD A4 FA              lda mnem_text+1,X
+ECBE  CD 53 02              cmp BYTEBUF+1
+ECC1  D0 08                 bne ao_m3
+ECC3  BD A5 FA              lda mnem_text+2,X
+ECC6  CD 54 02              cmp BYTEBUF+2
+ECC9  F0 0D                 beq ao_m4
+                    ao_m3:
+ECCB  E8                    inx
+ECCC  E8                    inx
+ECCD  E8                    inx
+ECCE  EE 8F 02              inc A_MNEM
+ECD1  E0 D2                 cpx #m_len-mnem_text    ; 表の終わり(m_len は mnem_text のすぐ後ろ)
+ECD3  D0 DE                 bne ao_m2
+ECD5  4C 40 EC              jmp a_err
+                    ao_m4:
+                            ; ---- ビット番号(RMB/SMB/BBR/BBS) ----
+ECD8  A9 FF                 lda #$FF
+ECDA  8D 90 02              sta A_BIT
+ECDD  20 BC E5              jsr peek
+ECE0  C9 30                 cmp #'0'
+ECE2  90 0B                 bcc ao_b1
+ECE4  C9 38                 cmp #'8'
+ECE6  B0 07                 bcs ao_b1
+ECE8  29 07                 and #$07
+ECEA  8D 90 02              sta A_BIT
+ECED  E6 F4                 inc lp
+                    ao_b1:
+                            ; ニーモニックの後は空白か行の終わり
+ECEF  20 BC E5              jsr peek
+ECF2  F0 07                 beq ao_opr
+ECF4  C9 20                 cmp #' '
+ECF6  F0 03                 beq ao_opr
+ECF8  4C 40 EC              jmp a_err
+                    
+                            ; ---- オペランド ----
+                    ao_opr:
+ECFB  9C 93 02              stz A_VAL
+ECFE  9C 94 02              stz A_VAL+1
+ED01  9C 92 02              stz A_LONG
+ED04  20 55 EC              jsr a_skip
+ED07  20 BC E5              jsr peek
+ED0A  D0 05                 bne ao_o1
+ED0C  A9 00                 lda #A_CLS_NONE
+ED0E  4C DE ED              jmp ao_cls
+                    ao_o1:
+ED11  C9 23                 cmp #'#'
+ED13  D0 10                 bne ao_o2
+ED15  E6 F4                 inc lp
+ED17  20 6A EC              jsr a_num
+ED1A  20 36 EE              jsr a_setval
+ED1D  20 61 EC              jsr a_end
+ED20  A9 02                 lda #A_CLS_IMM
+ED22  4C DE ED              jmp ao_cls
+                    ao_o2:
+ED25  C9 28                 cmp #'('
+ED27  D0 4A                 bne ao_o5
+ED29  E6 F4                 inc lp
+ED2B  20 6A EC              jsr a_num
+ED2E  20 36 EE              jsr a_setval
+ED31  20 55 EC              jsr a_skip
+ED34  20 BC E5              jsr peek
+ED37  C9 2C                 cmp #','
+ED39  D0 14                 bne ao_o3
+ED3B  E6 F4                 inc lp                  ; (v,X)
+ED3D  A9 58                 lda #'X'
+ED3F  20 88 EC              jsr a_expect
+ED42  A9 29                 lda #')'
+ED44  20 88 EC              jsr a_expect
+ED47  20 61 EC              jsr a_end
+ED4A  A9 06                 lda #A_CLS_IX
+ED4C  4C DE ED              jmp ao_cls
+                    ao_o3:
+ED4F  A9 29                 lda #')'
+ED51  20 88 EC              jsr a_expect
+ED54  20 55 EC              jsr a_skip
+ED57  20 BC E5              jsr peek
+ED5A  D0 05                 bne ao_o4
+ED5C  A9 08                 lda #A_CLS_I            ; (v)
+ED5E  4C DE ED              jmp ao_cls
+                    ao_o4:
+ED61  A9 2C                 lda #','                ; (v),Y
+ED63  20 88 EC              jsr a_expect
+ED66  A9 59                 lda #'Y'
+ED68  20 88 EC              jsr a_expect
+ED6B  20 61 EC              jsr a_end
+ED6E  A9 07                 lda #A_CLS_IY
+ED70  4C DE ED              jmp ao_cls
+                    ao_o5:
+                            ; "A" だけならアキュムレーター(なければ $0A として扱う)
+ED73  C9 41                 cmp #'A'
+ED75  D0 1B                 bne ao_o6
+ED77  A5 F4                 lda lp
+ED79  48                    pha
+ED7A  E6 F4                 inc lp
+ED7C  20 55 EC              jsr a_skip
+ED7F  20 BC E5              jsr peek
+ED82  D0 0B                 bne ao_o5b
+ED84  68                    pla
+ED85  A9 0A                 lda #$0A
+ED87  8D 93 02              sta A_VAL
+ED8A  A9 01                 lda #A_CLS_ACC
+ED8C  4C DE ED              jmp ao_cls
+                    ao_o5b:
+ED8F  68                    pla
+ED90  85 F4                 sta lp
+                    ao_o6:
+ED92  20 6A EC              jsr a_num
+ED95  20 36 EE              jsr a_setval
+ED98  20 55 EC              jsr a_skip
+ED9B  20 BC E5              jsr peek
+ED9E  D0 05                 bne ao_o7
+EDA0  A9 03                 lda #A_CLS_V
+EDA2  4C DE ED              jmp ao_cls
+                    ao_o7:
+EDA5  A9 2C                 lda #','
+EDA7  20 88 EC              jsr a_expect
+EDAA  20 55 EC              jsr a_skip
+EDAD  20 BC E5              jsr peek
+EDB0  C9 58                 cmp #'X'
+EDB2  D0 0A                 bne ao_o8
+EDB4  E6 F4                 inc lp
+EDB6  20 61 EC              jsr a_end
+EDB9  A9 04                 lda #A_CLS_VX
+EDBB  4C DE ED              jmp ao_cls
+                    ao_o8:
+EDBE  C9 59                 cmp #'Y'
+EDC0  D0 0A                 bne ao_o9
+EDC2  E6 F4                 inc lp
+EDC4  20 61 EC              jsr a_end
+EDC7  A9 05                 lda #A_CLS_VY
+EDC9  4C DE ED              jmp ao_cls
+                    ao_o9:
+EDCC  20 6A EC              jsr a_num               ; v,w
+EDCF  A5 E4                 lda num
+EDD1  8D 95 02              sta A_VAL2
+EDD4  A5 E5                 lda num+1
+EDD6  8D 96 02              sta A_VAL2+1
+EDD9  20 61 EC              jsr a_end
+EDDC  A9 09                 lda #A_CLS_ZR
+                    
+                            ; ---- アドレッシングを決める ----
+                    ao_cls:
+EDDE  8D 91 02              sta A_CLS
+EDE1  0A                    asl
+EDE2  6D 91 02              adc A_CLS               ; ×3
+EDE5  AE 92 02              ldx A_LONG
+EDE8  F0 03                 beq ao_c1
+EDEA  18                    clc
+EDEB  69 1E                 adc #a_long_modes-a_short_modes
+                    ao_c1:
+EDED  AA                    tax
+EDEE  A0 03                 ldy #3
+                    ao_c2:
+EDF0  BD F8 EE              lda a_short_modes,X
+EDF3  30 10                 bmi ao_fail
+EDF5  8D 97 02              sta A_MODE
+EDF8  DA                    phx
+EDF9  5A                    phy
+EDFA  20 08 EE              jsr a_try
+EDFD  7A                    ply
+EDFE  FA                    plx
+EDFF  90 40                 bcc ao_found
+EE01  E8                    inx
+EE02  88                    dey
+EE03  D0 EB                 bne ao_c2
+                    ao_fail:
+EE05  4C 40 EC              jmp a_err
+                    
+                    ; A_MODE で A_MNEM の命令があり、値が収まれば C=0、tmp = オペコード
+                    a_try:
+EE08  AC 97 02              ldy A_MODE
+EE0B  B9 9B FB              lda m_kind,Y
+EE0E  C9 01                 cmp #1                  ; 1バイトのオペランド
+EE10  F0 04                 beq at_byte
+EE12  C0 0F                 cpy #OPM_ZPR
+EE14  D0 05                 bne at_find
+                    at_byte:
+EE16  AD 94 02              lda A_VAL+1
+EE19  D0 15                 bne at_no
+                    at_find:
+EE1B  A2 00                 ldx #0
+                    at_1:
+EE1D  BD A3 F8              lda op_mnem,X
+EE20  CD 8F 02              cmp A_MNEM
+EE23  D0 08                 bne at_2
+EE25  BD A3 F9              lda op_mode,X
+EE28  CD 97 02              cmp A_MODE
+EE2B  F0 05                 beq at_yes
+                    at_2:
+EE2D  E8                    inx
+EE2E  D0 ED                 bne at_1
+                    at_no:
+EE30  38                    sec
+EE31  60                    rts
+                    at_yes:
+EE32  86 F5                 stx tmp
+EE34  18                    clc
+EE35  60                    rts
+                    
+                    ; num を A_VAL に
+                    a_setval:
+EE36  A5 E4                 lda num
+EE38  8D 93 02              sta A_VAL
+EE3B  A5 E5                 lda num+1
+EE3D  8D 94 02              sta A_VAL+1
+EE40  60                    rts
+                    
+                            ; ---- 書き出す ----
+                    ao_found:
+                            ; ビット番号: RMB/SMB/BBR/BBS(下位3ビットが7)には必要、それ以外には付けない
+EE41  A5 F5                 lda tmp
+EE43  29 07                 and #$07
+EE45  C9 07                 cmp #$07
+EE47  D0 10                 bne ao_f1
+EE49  AD 90 02              lda A_BIT
+EE4C  30 B7                 bmi ao_fail
+EE4E  0A                    asl
+EE4F  0A                    asl
+EE50  0A                    asl
+EE51  0A                    asl
+EE52  18                    clc
+EE53  65 F5                 adc tmp
+EE55  85 F5                 sta tmp
+EE57  80 05                 bra ao_f2
+                    ao_f1:
+EE59  AD 90 02              lda A_BIT
+EE5C  10 A7                 bpl ao_fail
+                    ao_f2:
+EE5E  A5 F5                 lda tmp
+EE60  8D 52 02              sta BYTEBUF
+EE63  AD 93 02              lda A_VAL
+EE66  8D 53 02              sta BYTEBUF+1
+EE69  AD 94 02              lda A_VAL+1
+EE6C  8D 54 02              sta BYTEBUF+2
+EE6F  AE 97 02              ldx A_MODE
+EE72  BD 9B FB              lda m_kind,X
+EE75  C9 03                 cmp #3
+EE77  F0 06                 beq ao_rel
+EE79  C9 04                 cmp #4
+EE7B  F0 0C                 beq ao_zpr
+EE7D  80 1E                 bra ao_write
+                    ao_rel:
+EE7F  A9 02                 lda #2                  ; 分岐: 次の命令からの距離
+EE81  20 CA EE              jsr a_offset
+EE84  8D 53 02              sta BYTEBUF+1
+EE87  80 14                 bra ao_write
+                    ao_zpr:
+EE89  AD 95 02              lda A_VAL2
+EE8C  8D 93 02              sta A_VAL
+EE8F  AD 96 02              lda A_VAL2+1
+EE92  8D 94 02              sta A_VAL+1
+EE95  A9 03                 lda #3
+EE97  20 CA EE              jsr a_offset
+EE9A  8D 54 02              sta BYTEBUF+2
+                    ao_write:
+EE9D  AD 8A 02              lda A_ADDR
+EEA0  85 E6                 sta a1
+EEA2  AD 8B 02              lda A_ADDR+1
+EEA5  85 E7                 sta a1+1
+EEA7  AE 97 02              ldx A_MODE
+EEAA  BD 75 FB              lda m_len,X
+EEAD  85 F8                 sta cnt
+EEAF  A0 00                 ldy #0
+                    ao_w1:
+EEB1  B9 52 02              lda BYTEBUF,Y
+EEB4  91 E6                 sta (a1),Y
+EEB6  C8                    iny
+EEB7  C4 F8                 cpy cnt
+EEB9  D0 F6                 bne ao_w1
+EEBB  18                    clc
+EEBC  AD 8A 02              lda A_ADDR
+EEBF  65 F8                 adc cnt
+EEC1  8D 8A 02              sta A_ADDR
+EEC4  90 03                 bcc ao_w2
+EEC6  EE 8B 02              inc A_ADDR+1
+                    ao_w2:
+EEC9  60                    rts
+                    
+                    ; A_VAL(分岐先)- (A_ADDR + A) を返す。-128〜127 に収まらなければエラー
+                    a_offset:
+EECA  18                    clc
+EECB  6D 8A 02              adc A_ADDR
+EECE  85 E0                 sta ptr
+EED0  AD 8B 02              lda A_ADDR+1
+EED3  69 00                 adc #0
+EED5  85 E1                 sta ptr+1
+EED7  38                    sec
+EED8  AD 93 02              lda A_VAL
+EEDB  E5 E0                 sbc ptr
+EEDD  85 F6                 sta tmp2
+EEDF  AD 94 02              lda A_VAL+1
+EEE2  E5 E1                 sbc ptr+1
+EEE4  F0 0B                 beq aof_pos             ; 上位が0なら 0〜127 のはず
+EEE6  C9 FF                 cmp #$FF
+EEE8  D0 04                 bne aof_err
+EEEA  A5 F6                 lda tmp2                ; 上位が$FFなら -128〜-1 のはず
+EEEC  30 07                 bmi aof_ok
+                    aof_err:
+EEEE  4C 40 EC              jmp a_err
+                    aof_pos:
+EEF1  A5 F6                 lda tmp2
+EEF3  30 F9                 bmi aof_err
+                    aof_ok:
+EEF5  A5 F6                 lda tmp2
+EEF7  60                    rts
+                    
+                    ; オペランドの形ごとに試すアドレッシング(3つずつ、$FF で終わり)
+                    a_short_modes:
+EEF8  00 01 FF              .byte OPM_IMP, OPM_ACC, $FF     ; なし
+EEFB  01 03 09              .byte OPM_ACC, OPM_ZP, OPM_ABS  ; A
+EEFE  02 FF FF              .byte OPM_IMM, $FF, $FF         ; #v
+EF01  0E 03 09              .byte OPM_REL, OPM_ZP, OPM_ABS  ; v
+EF04  04 0A FF              .byte OPM_ZPX, OPM_ABX, $FF     ; v,X
+EF07  05 0B FF              .byte OPM_ZPY, OPM_ABY, $FF     ; v,Y
+EF0A  06 0D FF              .byte OPM_IZX, OPM_AIX, $FF     ; (v,X)
+EF0D  07 FF FF              .byte OPM_IZY, $FF, $FF         ; (v),Y
+EF10  08 0C FF              .byte OPM_IZP, OPM_IND, $FF     ; (v)
+EF13  0F FF FF              .byte OPM_ZPR, $FF, $FF         ; v,w
+                    ; 3桁以上で書いたとき
+                    a_long_modes:
+EF16  00 01 FF              .byte OPM_IMP, OPM_ACC, $FF
+EF19  01 03 09              .byte OPM_ACC, OPM_ZP, OPM_ABS
+EF1C  02 FF FF              .byte OPM_IMM, $FF, $FF
+EF1F  0E 09 03              .byte OPM_REL, OPM_ABS, OPM_ZP
+EF22  0A 04 FF              .byte OPM_ABX, OPM_ZPX, $FF
+EF25  0B 05 FF              .byte OPM_ABY, OPM_ZPY, $FF
+EF28  0D 06 FF              .byte OPM_AIX, OPM_IZX, $FF
+EF2B  07 FF FF              .byte OPM_IZY, $FF, $FF
+EF2E  0C 08 FF              .byte OPM_IND, OPM_IZP, $FF
+EF31  0F FF FF              .byte OPM_ZPR, $FF, $FF
+                    
+                    ; ===================================================================
+                    ; テープ(BIOS の TSAVE, TFIND, TLOAD と、モニターの W, L)
+                    ;
+                    ; テープの形式: ブロックを続けて記録する。1つのブロックは
+                    ;   "PX"  種類(1)  名前(8)  開始番地(2)  長さ(2)  データ  チェックサム(1)
+                    ; チェックサムは、そのブロックのそれより前のすべてのバイトの和の下位8ビット。
+                    ; 保存はいつもテープの最後に足す(APPEND)。
+                    ; ===================================================================
+                    
+                    ; T_TYPE, T_NAME, T_START, T_LEN のブロックをテープの最後に足す。
+                    ; 保存できれば C=0。テープがいっぱいなら C=1、A = TE_FULL(テープは保存前のまま)
+                    tsave:
+EF34  A9 03                 lda #TAPE_APPEND
+EF36  8D 31 80              sta TAPE_CTRL
+EF39  9C B0 02              stz T_SUM
+EF3C  A9 50                 lda #'P'
+EF3E  20 BA EF              jsr t_put
+EF41  A9 58                 lda #'X'
+EF43  20 BA EF              jsr t_put
+EF46  AD A0 02              lda T_TYPE
+EF49  20 BA EF              jsr t_put
+EF4C  A2 00                 ldx #0
+                    ts_1:
+EF4E  BD A1 02              lda T_NAME,X
+EF51  20 BA EF              jsr t_put
+EF54  E8                    inx
+EF55  E0 08                 cpx #8
+EF57  D0 F5                 bne ts_1
+EF59  AD A9 02              lda T_START
+EF5C  20 BA EF              jsr t_put
+EF5F  AD AA 02              lda T_START+1
+EF62  20 BA EF              jsr t_put
+EF65  AD AB 02              lda T_LEN
+EF68  20 BA EF              jsr t_put
+EF6B  AD AC 02              lda T_LEN+1
+EF6E  20 BA EF              jsr t_put
+EF71  AD A9 02              lda T_START
+EF74  85 E0                 sta ptr
+EF76  AD AA 02              lda T_START+1
+EF79  85 E1                 sta ptr+1
+EF7B  AD AB 02              lda T_LEN
+EF7E  8D AE 02              sta T_PEND
+EF81  AD AC 02              lda T_LEN+1
+EF84  8D AF 02              sta T_PEND+1
+                    ts_2:
+EF87  AD AE 02              lda T_PEND
+EF8A  0D AF 02              ora T_PEND+1
+EF8D  F0 10                 beq ts_3
+EF8F  B2 E0                 lda (ptr)
+EF91  20 BA EF              jsr t_put
+EF94  E6 E0                 inc ptr
+EF96  D0 02                 bne ts_2b
+EF98  E6 E1                 inc ptr+1
+                    ts_2b:
+EF9A  20 DA EF              jsr t_dec
+EF9D  80 E8                 bra ts_2
+                    ts_3:
+EF9F  AD B0 02              lda T_SUM
+EFA2  8D 30 80              sta TAPE_DATA
+EFA5  AD 31 80              lda TAPE_CTRL           ; いっぱいで書けなかったバイトがあるか
+EFA8  29 20                 and #TAPE_FULL
+EFAA  D0 05                 bne ts_full
+EFAC  9C 31 80              stz TAPE_CTRL           ; 止めて確定する
+EFAF  18                    clc
+EFB0  60                    rts
+                    ts_full:
+EFB1  A9 04                 lda #TAPE_CANCEL        ; このブロックを捨てて、保存前の中身に戻す
+EFB3  8D 31 80              sta TAPE_CTRL
+EFB6  A9 04                 lda #TE_FULL
+EFB8  38                    sec
+EFB9  60                    rts
+                    
+                    ; A をテープに書き、チェックサムに足す
+                    t_put:
+EFBA  8D 30 80              sta TAPE_DATA
+EFBD  18                    clc
+EFBE  6D B0 02              adc T_SUM
+EFC1  8D B0 02              sta T_SUM
+EFC4  60                    rts
+                    
+                    ; テープから1バイト読み、チェックサムに足す。もうなければ C=1
+                    t_get:
+EFC5  AD 31 80              lda TAPE_CTRL
+EFC8  10 0E                 bpl tg_eot              ; bit7: 読めるデータがある
+EFCA  AD 30 80              lda TAPE_DATA
+EFCD  48                    pha
+EFCE  18                    clc
+EFCF  6D B0 02              adc T_SUM
+EFD2  8D B0 02              sta T_SUM
+EFD5  68                    pla
+EFD6  18                    clc
+EFD7  60                    rts
+                    tg_eot:
+EFD8  38                    sec
+EFD9  60                    rts
+                    
+                    ; T_PEND を1減らす
+                    t_dec:
+EFDA  AD AE 02              lda T_PEND
+EFDD  D0 03                 bne td_1
+EFDF  CE AF 02              dec T_PEND+1
+                    td_1:
+EFE2  CE AE 02              dec T_PEND
+EFE5  60                    rts
+                    
+                    ; 次のブロックの見出しを T_* に読む。A=0 なら先頭から、A=1 なら続きから。
+                    ; 見つかれば C=0。なければ C=1、A = TE_NOTAPE(テープが空)/ TE_NOTFOUND(もうない)/ TE_BAD
+                    tfind:
+EFE6  C9 00                 cmp #0
+EFE8  D0 14                 bne tf_skip
+EFEA  A9 01                 lda #TAPE_PLAY
+EFEC  8D 31 80              sta TAPE_CTRL
+EFEF  9C AE 02              stz T_PEND
+EFF2  9C AF 02              stz T_PEND+1
+EFF5  AD 31 80              lda TAPE_CTRL
+EFF8  30 1F                 bmi tf_hdr
+EFFA  A9 01                 lda #TE_NOTAPE
+EFFC  80 50                 bra tf_err
+                    tf_skip:
+EFFE  AD AE 02              lda T_PEND              ; 前のブロックの残りを読み飛ばす
+F001  0D AF 02              ora T_PEND+1
+F004  F0 0A                 beq tf_next
+F006  20 C5 EF              jsr t_get
+F009  B0 41                 bcs tf_bad
+F00B  20 DA EF              jsr t_dec
+F00E  80 EE                 bra tf_skip
+                    tf_next:
+F010  AD 31 80              lda TAPE_CTRL
+F013  30 04                 bmi tf_hdr
+F015  A9 02                 lda #TE_NOTFOUND
+F017  80 35                 bra tf_err
+                    tf_hdr:
+F019  9C B0 02              stz T_SUM
+F01C  20 C5 EF              jsr t_get
+F01F  C9 50                 cmp #'P'
+F021  D0 29                 bne tf_bad
+F023  20 C5 EF              jsr t_get
+F026  C9 58                 cmp #'X'
+F028  D0 22                 bne tf_bad
+F02A  A2 00                 ldx #0                  ; 種類、名前、開始番地、長さ(12バイト)
+                    tf_h1:
+F02C  20 C5 EF              jsr t_get
+F02F  B0 1B                 bcs tf_bad
+F031  9D A0 02              sta T_TYPE,X
+F034  E8                    inx
+F035  E0 0D                 cpx #13
+F037  D0 F3                 bne tf_h1
+F039  18                    clc                     ; 残り = データ + チェックサム
+F03A  AD AB 02              lda T_LEN
+F03D  69 01                 adc #1
+F03F  8D AE 02              sta T_PEND
+F042  AD AC 02              lda T_LEN+1
+F045  69 00                 adc #0
+F047  8D AF 02              sta T_PEND+1
+F04A  18                    clc
+F04B  60                    rts
+                    tf_bad:
+F04C  A9 03                 lda #TE_BAD
+                    tf_err:
+F04E  9C 31 80              stz TAPE_CTRL
+F051  38                    sec
+F052  60                    rts
+                    
+                    ; TFIND で見つけたブロックのデータを T_START から書き込む(T_START は変えてよい)。
+                    ; チェックサムを確かめてテープを止める。C=1 なら A = TE_BAD
+                    tload:
+F053  AD A9 02              lda T_START
+F056  85 E0                 sta ptr
+F058  AD AA 02              lda T_START+1
+F05B  85 E1                 sta ptr+1
+F05D  AD AB 02              lda T_LEN
+F060  8D AE 02              sta T_PEND
+F063  AD AC 02              lda T_LEN+1
+F066  8D AF 02              sta T_PEND+1
+                    tl_1:
+F069  AD AE 02              lda T_PEND
+F06C  0D AF 02              ora T_PEND+1
+F06F  F0 12                 beq tl_2
+F071  20 C5 EF              jsr t_get
+F074  B0 D6                 bcs tf_bad
+F076  92 E0                 sta (ptr)
+F078  E6 E0                 inc ptr
+F07A  D0 02                 bne tl_1b
+F07C  E6 E1                 inc ptr+1
+                    tl_1b:
+F07E  20 DA EF              jsr t_dec
+F081  80 E6                 bra tl_1
+                    tl_2:
+F083  AD B0 02              lda T_SUM               ; ここまでの和
+F086  48                    pha
+F087  20 C5 EF              jsr t_get
+F08A  85 F5                 sta tmp
+F08C  68                    pla
+F08D  B0 BD                 bcs tf_bad
+F08F  C5 F5                 cmp tmp
+F091  D0 B9                 bne tf_bad
+F093  9C 31 80              stz TAPE_CTRL
+F096  18                    clc
+F097  60                    rts
+                    
+                    ; "名前" を BYTEBUF に読む(8文字まで、足りない分は空白)。名前がなければ C=1(全部空白)
+                    get_name:
+F098  A2 07                 ldx #7
+F09A  A9 20                 lda #' '
+                    gn_1:
+F09C  9D 52 02              sta BYTEBUF,X
+F09F  CA                    dex
+F0A0  10 FA                 bpl gn_1
+F0A2  20 50 E6              jsr more_args
+F0A5  C9 22                 cmp #'"'
+F0A7  D0 20                 bne gn_none
+F0A9  E6 F4                 inc lp
+F0AB  A2 00                 ldx #0
+                    gn_2:
+F0AD  A4 F4                 ldy lp
+F0AF  CC 50 02              cpy LINELEN
+F0B2  B0 13                 bcs gn_done
+F0B4  B9 00 03              lda LINEBUF,Y           ; 大文字にしない
+F0B7  E6 F4                 inc lp
+F0B9  C9 22                 cmp #'"'
+F0BB  F0 0A                 beq gn_done
+F0BD  E0 08                 cpx #8
+F0BF  B0 EC                 bcs gn_2                ; 9文字目からは捨てる
+F0C1  9D 52 02              sta BYTEBUF,X
+F0C4  E8                    inx
+F0C5  80 E6                 bra gn_2
+                    gn_done:
+F0C7  18                    clc
+F0C8  60                    rts
+                    gn_none:
+F0C9  38                    sec
+F0CA  60                    rts
+                    
+                    ; W 開始 終了 ["名前"]  テープに保存する
+                    cmd_w:
+F0CB  20 9A E6              jsr get_range
+F0CE  20 98 F0              jsr get_name
+F0D1  20 47 E6              jsr need_end
+F0D4  A2 07                 ldx #7
+                    w_1:
+F0D6  BD 52 02              lda BYTEBUF,X
+F0D9  9D A1 02              sta T_NAME,X
+F0DC  CA                    dex
+F0DD  10 F7                 bpl w_1
+F0DF  A9 01                 lda #TT_MEM
+F0E1  8D A0 02              sta T_TYPE
+F0E4  A5 E6                 lda a1
+F0E6  8D A9 02              sta T_START
+F0E9  85 EA                 sta a3
+F0EB  A5 E7                 lda a1+1
+F0ED  8D AA 02              sta T_START+1
+F0F0  85 EB                 sta a3+1
+F0F2  38                    sec                     ; 長さ = 終了 - 開始 + 1
+F0F3  A5 E8                 lda a2
+F0F5  E5 E6                 sbc a1
+F0F7  8D AB 02              sta T_LEN
+F0FA  A5 E9                 lda a2+1
+F0FC  E5 E7                 sbc a1+1
+F0FE  8D AC 02              sta T_LEN+1
+F101  EE AB 02              inc T_LEN
+F104  D0 03                 bne w_2
+F106  EE AC 02              inc T_LEN+1
+                    w_2:
+F109  A9 01                 lda #ANN_BUSY
+F10B  0C 02 80              tsb LCD_ANN
+F10E  20 34 EF              jsr tsave
+F111  08                    php
+F112  A9 01                 lda #ANN_BUSY
+F114  1C 02 80              trb LCD_ANN
+F117  28                    plp
+F118  90 0D                 bcc w_3
+F11A  20 4E F2              jsr tape_msg            ; いっぱいで保存できない(テープは保存前のまま)
+F11D  54 41 50 45 +         .byte "TAPE FULL", 0
+                    w_3:
+F127  20 89 E3              jsr prinline
+F12A  53 41 56 45 +         .byte "SAVE ", 0
+F130  4C 6C F2              jmp pr_a3_a2
+                    
+                    ; L ["名前"] [番地]  テープから読み込む
+                    ;   名前がなければ最初のメモリのブロック。同じ名前のブロックがいくつかあれば最後(最新)のもの。
+                    ;   番地を書くとそこへ読み込む
+                    cmd_l:
+F133  64 F8                 stz cnt                 ; 1: 番地の指定あり
+F135  64 F6                 stz tmp2                ; 1: 名前の指定あり
+F137  20 98 F0              jsr get_name
+F13A  B0 02                 bcs l_1
+F13C  E6 F6                 inc tmp2
+                    l_1:
+F13E  20 50 E6              jsr more_args
+F141  F0 0A                 beq l_go
+F143  A2 EA                 ldx #a3
+F145  20 39 E6              jsr arg_x
+F148  20 47 E6              jsr need_end
+F14B  E6 F8                 inc cnt
+                    l_go:
+F14D  A9 01                 lda #ANN_BUSY
+F14F  0C 02 80              tsb LCD_ANN
+F152  64 E8                 stz a2                  ; 名前の合うブロックの数
+F154  64 E9                 stz a2+1
+F156  A5 F6                 lda tmp2
+F158  F0 1D                 beq l_find              ; 名前を省いたら最初のメモリのブロック
+                            ; 1回目: 名前の合うブロックを数える(同じ名前がいくつかあれば、最後のものを読む)
+F15A  A9 00                 lda #0
+F15C  20 E6 EF              jsr tfind
+F15F  B0 1D                 bcs l_err1
+                    l_cnt:
+F161  20 05 F2              jsr l_match
+F164  D0 06                 bne l_cn
+F166  E6 E8                 inc a2
+F168  D0 02                 bne l_cn
+F16A  E6 E9                 inc a2+1
+                    l_cn:
+F16C  A9 01                 lda #1
+F16E  20 E6 EF              jsr tfind
+F171  90 EE                 bcc l_cnt
+F173  C9 03                 cmp #TE_BAD
+F175  F0 07                 beq l_err1
+                            ; 2回目: a2 番目(最後)のものを探す
+                    l_find:
+F177  A9 00                 lda #0
+F179  20 E6 EF              jsr tfind
+F17C  90 03                 bcc l_chk
+                    l_err1:
+F17E  4C 20 F2              jmp l_err
+                    l_chk:
+F181  20 05 F2              jsr l_match
+F184  D0 75                 bne l_next
+F186  A5 E8                 lda a2                  ; 名前を省いたとき(0)は最初のもの
+F188  05 E9                 ora a2+1
+F18A  F0 0E                 beq l_found
+F18C  A5 E8                 lda a2
+F18E  D0 02                 bne l_dec
+F190  C6 E9                 dec a2+1
+                    l_dec:
+F192  C6 E8                 dec a2
+F194  A5 E8                 lda a2
+F196  05 E9                 ora a2+1
+F198  D0 61                 bne l_next
+                    l_found:
+F19A  A5 F8                 lda cnt
+F19C  F0 0A                 beq l_2
+F19E  A5 EA                 lda a3
+F1A0  8D A9 02              sta T_START
+F1A3  A5 EB                 lda a3+1
+F1A5  8D AA 02              sta T_START+1
+                    l_2:
+F1A8  20 53 F0              jsr tload
+F1AB  B0 73                 bcs l_err
+                            ; a3 = 開始、a2 = 開始 + 長さ - 1
+F1AD  AD A9 02              lda T_START
+F1B0  85 EA                 sta a3
+F1B2  18                    clc
+F1B3  6D AB 02              adc T_LEN
+F1B6  85 E8                 sta a2
+F1B8  AD AA 02              lda T_START+1
+F1BB  85 EB                 sta a3+1
+F1BD  6D AC 02              adc T_LEN+1
+F1C0  85 E9                 sta a2+1
+F1C2  A5 E8                 lda a2
+F1C4  D0 02                 bne l_3
+F1C6  C6 E9                 dec a2+1
+                    l_3:
+F1C8  C6 E8                 dec a2
+F1CA  A9 01                 lda #ANN_BUSY
+F1CC  1C 02 80              trb LCD_ANN
+                            ; 読み込んだプログラムをすぐ G で実行できるようにする
+F1CF  A5 EA                 lda a3
+F1D1  8D 62 02              sta R_PCL
+F1D4  8D 84 02              sta DNEXT
+F1D7  8D 86 02              sta UNEXT
+F1DA  A5 EB                 lda a3+1
+F1DC  8D 63 02              sta R_PCH
+F1DF  8D 85 02              sta DNEXT+1
+F1E2  8D 87 02              sta UNEXT+1
+F1E5  A9 FF                 lda #$FF
+F1E7  8D 68 02              sta R_S
+F1EA  A9 01                 lda #1
+F1EC  8D 6B 02              sta FRESH
+F1EF  20 89 E3              jsr prinline
+F1F2  4C 4F 41 44 +         .byte "LOAD ", 0
+F1F8  4C 6C F2              jmp pr_a3_a2
+                    l_next:
+F1FB  A9 01                 lda #1
+F1FD  20 E6 EF              jsr tfind
+F200  B0 1E                 bcs l_err
+F202  4C 81 F1              jmp l_chk
+                    
+                    ; T_* が L で読むブロックなら Z=1(メモリのブロックで、名前を省いたか名前が合う)
+                    l_match:
+F205  AD A0 02              lda T_TYPE
+F208  C9 01                 cmp #TT_MEM
+F20A  D0 13                 bne lm_done
+F20C  A5 F6                 lda tmp2
+F20E  F0 0F                 beq lm_done
+F210  A2 07                 ldx #7
+                    lm_1:
+F212  BD A1 02              lda T_NAME,X
+F215  DD 52 02              cmp BYTEBUF,X
+F218  D0 05                 bne lm_done
+F21A  CA                    dex
+F21B  10 F5                 bpl lm_1
+F21D  A9 00                 lda #0
+                    lm_done:
+F21F  60                    rts
+                    
+                    l_err:
+F220  C9 01                 cmp #TE_NOTAPE
+F222  D0 0B                 bne l_e2
+F224  20 4E F2              jsr tape_msg
+F227  4E 4F 20 54 +         .byte "NO TAPE", 0
+                    l_e2:
+F22F  C9 02                 cmp #TE_NOTFOUND
+F231  D0 0D                 bne l_e3
+F233  20 4E F2              jsr tape_msg
+F236  4E 4F 54 20 +         .byte "NOT FOUND", 0
+                    l_e3:
+F240  20 4E F2              jsr tape_msg
+F243  54 41 50 45 +         .byte "TAPE ERROR", 0
+                    
+                    ; テープを止め、JSR の後ろのメッセージを表示してエラーにする(戻らない)
+                    tape_msg:
+F24E  9C 31 80              stz TAPE_CTRL
+F251  20 54 E3              jsr crlf_if
+F254  68                    pla                     ; 戻り先 = 文字列の1バイト手前
+F255  85 FE                 sta sptr
+F257  68                    pla
+F258  85 FF                 sta sptr+1
+                    tm_1:
+F25A  E6 FE                 inc sptr
+F25C  D0 02                 bne tm_2
+F25E  E6 FF                 inc sptr+1
+                    tm_2:
+F260  B2 FE                 lda (sptr)
+F262  F0 05                 beq tm_3
+F264  20 4A E2              jsr putc
+F267  80 F1                 bra tm_1
+                    tm_3:
+F269  4C 5D E5              jmp err_beep            ; スタックは mon_restart で戻す
+                    
+                    ; "AAAA-BBBB"(a3 から a2)を表示する
+                    pr_a3_a2:
+F26C  A2 EA                 ldx #a3
+F26E  20 7F E3              jsr prhex16
+F271  A9 2D                 lda #'-'
+F273  20 4A E2              jsr putc
+F276  A2 E8                 ldx #a2
+F278  4C 7F E3              jmp prhex16
+                    
+                    ; Q  BASIC に戻る
+                    cmd_q:
+F27B  20 47 E6              jsr need_end
+F27E  20 D7 E0              jsr basic_present
+F281  B0 03                 bcs q_1
+F283  4C 55 E5              jmp error
+                    q_1:
+F286  38                    sec                     ; Q: 変数を残して戻る
+F287  4C 03 A0              jmp BASIC_WARM
+                    
+                    ; ===================================================================
+                    ; G [番地]  実行する
+                    ;   番地を書くと新しく始める(S=FF。RTS でモニターに戻る)
+                    ;   書かなければ、止まったところから続ける
+                    ; ===================================================================
+                    cmd_g:
+F28A  20 50 E6              jsr more_args
+F28D  F0 1A                 beq g_go
+F28F  20 30 E6              jsr need_hex
+F292  20 47 E6              jsr need_end
+F295  A5 E4                 lda num
+F297  8D 62 02              sta R_PCL
+F29A  A5 E5                 lda num+1
+F29C  8D 63 02              sta R_PCH
+F29F  A9 FF                 lda #$FF
+F2A1  8D 68 02              sta R_S
+F2A4  A9 01                 lda #1
+F2A6  8D 6B 02              sta FRESH
+                    g_go:
+F2A9  20 3C F3              jsr chk_bps             ; モニターの使う番地のもの(前の保存状態から)があれば実行しない
+F2AC  90 03                 bcc g_go1
+F2AE  4C 55 E5              jmp error
+                    g_go1:
+                            ; PC にブレークポイントがあれば、まず1命令進めてから置く
+F2B1  AD 62 02              lda R_PCL
+F2B4  85 E4                 sta num
+F2B6  AD 63 02              lda R_PCH
+F2B9  85 E5                 sta num+1
+F2BB  20 D3 EB              jsr b_find
+F2BE  90 0B                 bcc g_run
+F2C0  A9 02                 lda #RM_STEPGO
+F2C2  8D 6C 02              sta RUN_MODE
+F2C5  9C 6E 02              stz STEP_OVER
+F2C8  4C 03 F3              jmp do_step
+                    g_run:
+F2CB  9C 6C 02              stz RUN_MODE
+F2CE  20 72 F4              jsr install_bps
+F2D1  4C 1B F5              jmp resume
+                    
+                    ; ===================================================================
+                    ; T [回数]  1命令ずつ実行する
+                    ; P [回数]  同じだが、JSR はサブルーチンごと実行する
+                    ; ===================================================================
+                    cmd_t:
+F2D4  A9 00                 lda #0
+F2D6  80 02                 bra tp_1
+                    cmd_p:
+F2D8  A9 01                 lda #1
+                    tp_1:
+F2DA  8D 6E 02              sta STEP_OVER
+F2DD  A9 01                 lda #1
+F2DF  8D 6D 02              sta STEP_CNT
+F2E2  20 50 E6              jsr more_args
+F2E5  F0 11                 beq tp_2
+F2E7  20 30 E6              jsr need_hex
+F2EA  20 47 E6              jsr need_end
+F2ED  A5 E5                 lda num+1
+F2EF  D0 0F                 bne tp_err
+F2F1  A5 E4                 lda num
+F2F3  F0 0B                 beq tp_err
+F2F5  8D 6D 02              sta STEP_CNT
+                    tp_2:
+F2F8  A9 01                 lda #RM_STEP
+F2FA  8D 6C 02              sta RUN_MODE
+F2FD  4C 03 F3              jmp do_step
+                    tp_err:
+F300  4C 55 E5              jmp error
+                    
+                    ; 次に実行される命令の位置に一時 BRK を置いて実行する
+                    do_step:
+F303  20 6C F3              jsr calc_next
+F306  20 54 F3              jsr chk_temps           ; 全部を調べてから書く
+F309  B0 06                 bcs ds_err
+F30B  20 92 F4              jsr install_temps
+F30E  4C 1B F5              jmp resume
+                    ; 次の命令がモニターの使う番地なら、レジスタを表示して ? (何も書いていない)
+                    ; 一時 BRK の候補は取り消す(残すと、次に止まったときやリセットで、書いていない番地へ TB_SAVE を書き戻してしまう。B24-01)
+                    ds_err:
+F311  9C 7D 02              stz TB_N
+F314  9C 6C 02              stz RUN_MODE
+F317  20 4C E3              jsr cursor_off
+F31A  20 54 E3              jsr crlf_if
+F31D  20 99 E9              jsr show_regs
+F320  4C 55 E5              jmp error
+                    
+                    ; ptr がモニターの使う番地($00E0-$057F)なら C=1。A を壊す
+                    is_prot:
+F323  A5 E1                 lda ptr+1
+F325  F0 10                 beq ip_zp
+F327  C9 05                 cmp #$05
+F329  90 08                 bcc ip_yes              ; $0100-$04FF
+F32B  D0 08                 bne ip_no               ; $0600 から
+F32D  A5 E0                 lda ptr
+F32F  C9 80                 cmp #$80
+F331  B0 02                 bcs ip_no               ; $0580 から
+                    ip_yes:
+F333  38                    sec
+F334  60                    rts
+                    ip_no:
+F335  18                    clc
+F336  60                    rts
+                    ip_zp:
+F337  A5 E0                 lda ptr
+F339  C9 E0                 cmp #$E0                ; $00E0 から C=1
+F33B  60                    rts
+                    
+                    ; ブレークポイントに、モニターの使う番地のものがあれば C=1
+                    chk_bps:
+F33C  A2 03                 ldx #3
+                    cbp_1:
+F33E  BD 74 02              lda BP_HI,X
+F341  30 0C                 bmi cbp_2
+F343  85 E1                 sta ptr+1
+F345  BD 70 02              lda BP_LO,X
+F348  85 E0                 sta ptr
+F34A  20 23 F3              jsr is_prot
+F34D  B0 04                 bcs cbp_3
+                    cbp_2:
+F34F  CA                    dex
+F350  10 EC                 bpl cbp_1
+F352  18                    clc
+                    cbp_3:
+F353  60                    rts
+                    
+                    ; 一時 BRK の場所に、モニターの使う番地があれば C=1
+                    chk_temps:
+F354  AE 7D 02              ldx TB_N
+                    ctp_1:
+F357  CA                    dex
+F358  30 10                 bmi ctp_2
+F35A  BD 7E 02              lda TB_LO,X
+F35D  85 E0                 sta ptr
+F35F  BD 80 02              lda TB_HI,X
+F362  85 E1                 sta ptr+1
+F364  20 23 F3              jsr is_prot
+F367  90 EE                 bcc ctp_1
+F369  60                    rts
+                    ctp_2:
+F36A  18                    clc
+F36B  60                    rts
+                    
+                    ; PC の命令の次に来るアドレス(分岐なら2つ)を TB_LO/TB_HI に入れる。
+                    ; RAM でないアドレスには置けないので数えない
+                    calc_next:
+F36C  9C 7D 02              stz TB_N
+F36F  AD 62 02              lda R_PCL
+F372  85 EC                 sta daddr
+F374  AD 63 02              lda R_PCH
+F377  85 ED                 sta daddr+1
+F379  B2 EC                 lda (daddr)
+F37B  85 F5                 sta tmp                 ; オペコード
+F37D  AA                    tax
+F37E  BD A3 F9              lda op_mode,X
+F381  85 F6                 sta tmp2                ; アドレッシング
+F383  A5 F5                 lda tmp
+F385  C9 20                 cmp #$20                ; JSR
+F387  F0 43                 beq cn_jsr
+F389  C9 4C                 cmp #$4C                ; JMP abs
+F38B  F0 53                 beq cn_jmp
+F38D  C9 6C                 cmp #$6C                ; JMP (abs)
+F38F  F0 54                 beq cn_jmpi
+F391  C9 7C                 cmp #$7C                ; JMP (abs,X)
+F393  F0 55                 beq cn_jmpx
+F395  C9 60                 cmp #$60                ; RTS
+F397  F0 6D                 beq cn_rts
+F399  C9 40                 cmp #$40                ; RTI
+F39B  F0 7E                 beq cn_rti
+F39D  C9 00                 cmp #$00                ; BRK はそのまま実行して止まる
+F39F  F0 2A                 beq cn_done
+F3A1  C9 DB                 cmp #$DB                ; STP
+F3A3  F0 26                 beq cn_done
+                            ; 次の命令
+F3A5  A6 F6                 ldx tmp2
+F3A7  BD 75 FB              lda m_len,X
+F3AA  20 36 F4              jsr cn_add_len
+                            ; 分岐なら分岐先も
+F3AD  A5 F6                 lda tmp2
+F3AF  C9 0E                 cmp #OPM_REL
+F3B1  F0 0C                 beq cn_rel
+F3B3  C9 0F                 cmp #OPM_ZPR
+F3B5  D0 14                 bne cn_done
+F3B7  A0 02                 ldy #2                  ; BBR/BBS: オペランドの2バイト目、命令長3
+F3B9  B1 EC                 lda (daddr),Y
+F3BB  A0 03                 ldy #3
+F3BD  80 06                 bra cn_branch
+                    cn_rel:
+F3BF  A0 01                 ldy #1
+F3C1  B1 EC                 lda (daddr),Y
+F3C3  A0 02                 ldy #2
+                    cn_branch:
+F3C5  20 56 F4              jsr calc_rel            ; ptr = 分岐先
+F3C8  4C 41 F4              jmp cn_add
+                    cn_done:
+F3CB  60                    rts
+                    
+                    cn_jsr:
+F3CC  AD 6E 02              lda STEP_OVER
+F3CF  D0 0B                 bne cn_jsr_over
+F3D1  20 2A F4              jsr cn_word             ; ptr = 呼び出し先
+F3D4  20 41 F4              jsr cn_add
+F3D7  AD 7D 02              lda TB_N
+F3DA  D0 EF                 bne cn_done             ; ROM のサブルーチンは中に入らない
+                    cn_jsr_over:
+F3DC  A9 03                 lda #3
+F3DE  80 56                 bra cn_add_len
+                    
+                    cn_jmp:
+F3E0  20 2A F4              jsr cn_word
+F3E3  80 5C                 bra cn_add
+                    
+                    cn_jmpi:
+F3E5  20 2A F4              jsr cn_word
+F3E8  80 0F                 bra cn_ind
+                    
+                    cn_jmpx:
+F3EA  20 2A F4              jsr cn_word
+F3ED  18                    clc
+F3EE  A5 E0                 lda ptr
+F3F0  6D 65 02              adc R_X
+F3F3  85 E0                 sta ptr
+F3F5  90 02                 bcc cn_ind
+F3F7  E6 E1                 inc ptr+1
+                    cn_ind:
+                            ; ptr の指す2バイトを ptr に
+F3F9  B2 E0                 lda (ptr)
+F3FB  AA                    tax
+F3FC  A0 01                 ldy #1
+F3FE  B1 E0                 lda (ptr),Y
+F400  85 E1                 sta ptr+1
+F402  86 E0                 stx ptr
+F404  80 3B                 bra cn_add
+                    
+                    cn_rts:
+F406  AE 68 02              ldx R_S
+F409  BD 01 01              lda $0101,X
+F40C  85 E0                 sta ptr
+F40E  BD 02 01              lda $0102,X
+F411  85 E1                 sta ptr+1
+F413  E6 E0                 inc ptr
+F415  D0 2A                 bne cn_add
+F417  E6 E1                 inc ptr+1
+F419  80 26                 bra cn_add
+                    
+                    cn_rti:
+F41B  AE 68 02              ldx R_S
+F41E  BD 02 01              lda $0102,X
+F421  85 E0                 sta ptr
+F423  BD 03 01              lda $0103,X
+F426  85 E1                 sta ptr+1
+F428  80 17                 bra cn_add
+                    
+                    ; ptr = 命令のオペランドの2バイト
+                    cn_word:
+F42A  A0 01                 ldy #1
+F42C  B1 EC                 lda (daddr),Y
+F42E  85 E0                 sta ptr
+F430  C8                    iny
+F431  B1 EC                 lda (daddr),Y
+F433  85 E1                 sta ptr+1
+F435  60                    rts
+                    
+                    ; ptr = daddr + A にして追加
+                    cn_add_len:
+F436  18                    clc
+F437  65 EC                 adc daddr
+F439  85 E0                 sta ptr
+F43B  A5 ED                 lda daddr+1
+F43D  69 00                 adc #0
+F43F  85 E1                 sta ptr+1
+                    ; ptr を一時 BRK の場所に追加する(RAM でなければ何もしない)
+                    cn_add:
+F441  A5 E1                 lda ptr+1
+F443  30 10                 bmi cna_done
+F445  AE 7D 02              ldx TB_N
+F448  A5 E0                 lda ptr
+F44A  9D 7E 02              sta TB_LO,X
+F44D  A5 E1                 lda ptr+1
+F44F  9D 80 02              sta TB_HI,X
+F452  EE 7D 02              inc TB_N
+                    cna_done:
+F455  60                    rts
+                    
+                    ; ptr = daddr + Y + (A を符号付きで)
+                    calc_rel:
+F456  48                    pha
+F457  98                    tya
+F458  18                    clc
+F459  65 EC                 adc daddr
+F45B  85 E0                 sta ptr
+F45D  A5 ED                 lda daddr+1
+F45F  69 00                 adc #0
+F461  85 E1                 sta ptr+1
+F463  68                    pla
+F464  10 02                 bpl crl_1
+F466  C6 E1                 dec ptr+1
+                    crl_1:
+F468  18                    clc
+F469  65 E0                 adc ptr
+F46B  85 E0                 sta ptr
+F46D  90 02                 bcc crl_2
+F46F  E6 E1                 inc ptr+1
+                    crl_2:
+F471  60                    rts
+                    
+                    ; ---- BRK の書き込みと復元 ----
+                    
+                    install_bps:
+F472  A2 03                 ldx #3
+                    ib_1:
+F474  BD 74 02              lda BP_HI,X
+F477  30 10                 bmi ib_2
+F479  85 E1                 sta ptr+1
+F47B  BD 70 02              lda BP_LO,X
+F47E  85 E0                 sta ptr
+F480  B2 E0                 lda (ptr)
+F482  9D 78 02              sta BP_SAVE,X
+F485  A9 00                 lda #$00
+F487  92 E0                 sta (ptr)
+                    ib_2:
+F489  CA                    dex
+F48A  10 E8                 bpl ib_1
+F48C  A9 01                 lda #1
+F48E  8D 7C 02              sta BP_INST
+F491  60                    rts
+                    
+                    install_temps:
+F492  A2 00                 ldx #0
+                    it_1:
+F494  EC 7D 02              cpx TB_N
+F497  F0 16                 beq it_done
+F499  BD 7E 02              lda TB_LO,X
+F49C  85 E0                 sta ptr
+F49E  BD 80 02              lda TB_HI,X
+F4A1  85 E1                 sta ptr+1
+F4A3  B2 E0                 lda (ptr)
+F4A5  9D 82 02              sta TB_SAVE,X
+F4A8  A9 00                 lda #$00
+F4AA  92 E0                 sta (ptr)
+F4AC  E8                    inx
+F4AD  80 E5                 bra it_1
+                    it_done:
+F4AF  60                    rts
+                    
+                    ; 書き込んだ BRK をすべて元に戻す(一時 BRK は逆順に)
+                    remove_brks:
+F4B0  AE 7D 02              ldx TB_N
+                    rb_1:
+F4B3  CA                    dex
+F4B4  30 11                 bmi rb_2
+F4B6  BD 7E 02              lda TB_LO,X
+F4B9  85 E0                 sta ptr
+F4BB  BD 80 02              lda TB_HI,X
+F4BE  85 E1                 sta ptr+1
+F4C0  BD 82 02              lda TB_SAVE,X
+F4C3  92 E0                 sta (ptr)
+F4C5  80 EC                 bra rb_1
+                    rb_2:
+F4C7  9C 7D 02              stz TB_N
+F4CA  AD 7C 02              lda BP_INST
+F4CD  F0 19                 beq rb_done
+F4CF  A2 03                 ldx #3
+                    rb_3:
+F4D1  BD 74 02              lda BP_HI,X
+F4D4  30 0C                 bmi rb_4
+F4D6  85 E1                 sta ptr+1
+F4D8  BD 70 02              lda BP_LO,X
+F4DB  85 E0                 sta ptr
+F4DD  BD 78 02              lda BP_SAVE,X
+F4E0  92 E0                 sta (ptr)
+                    rb_4:
+F4E2  CA                    dex
+F4E3  10 EC                 bpl rb_3
+F4E5  9C 7C 02              stz BP_INST
+                    rb_done:
+F4E8  60                    rts
+                    
+                    ; ptr がいま書き込んでいる BRK の場所なら C=1
+                    is_our_brk:
+F4E9  AE 7D 02              ldx TB_N
+                    iob_1:
+F4EC  CA                    dex
+F4ED  30 10                 bmi iob_2
+F4EF  BD 7E 02              lda TB_LO,X
+F4F2  C5 E0                 cmp ptr
+F4F4  D0 F6                 bne iob_1
+F4F6  BD 80 02              lda TB_HI,X
+F4F9  C5 E1                 cmp ptr+1
+F4FB  D0 EF                 bne iob_1
+F4FD  38                    sec
+F4FE  60                    rts
+                    iob_2:
+F4FF  AD 7C 02              lda BP_INST
+F502  F0 13                 beq iob_no
+F504  A2 03                 ldx #3
+                    iob_3:
+F506  BD 74 02              lda BP_HI,X
+F509  C5 E1                 cmp ptr+1
+F50B  D0 07                 bne iob_4
+F50D  BD 70 02              lda BP_LO,X
+F510  C5 E0                 cmp ptr
+F512  F0 05                 beq iob_yes
+                    iob_4:
+F514  CA                    dex
+F515  10 EF                 bpl iob_3
+                    iob_no:
+F517  18                    clc
+F518  60                    rts
+                    iob_yes:
+F519  38                    sec
+F51A  60                    rts
+                    
+                    ; ---- ユーザーのプログラムへ ----
+                    
+                    ; R_* のレジスタで実行を始める
+                    resume:
+F51B  78                    sei
+F51C  9C 6A 02              stz MON_ACTIVE
+F51F  A9 01                 lda #ANN_BUSY
+F521  0C 02 80              tsb LCD_ANN
+F524  AE 68 02              ldx R_S
+F527  9A                    txs
+F528  AD 6B 02              lda FRESH
+F52B  F0 09                 beq rs_1
+F52D  9C 6B 02              stz FRESH
+F530  A9 F5                 lda #>(mon_ret-1)       ; RTS でモニターに戻る
+F532  48                    pha
+F533  A9 B2                 lda #<(mon_ret-1)
+F535  48                    pha
+                    rs_1:
+F536  AD 63 02              lda R_PCH
+F539  48                    pha
+F53A  AD 62 02              lda R_PCL
+F53D  48                    pha
+F53E  AD 67 02              lda R_P
+F541  48                    pha
+F542  AD 64 02              lda R_A
+F545  AE 65 02              ldx R_X
+F548  AC 66 02              ldy R_Y
+F54B  40                    rti
+                    
+                    ; ---- モニターに戻る入口 ----
+                    
+                    ; BRK(BRKVEC から)
+                    mon_brk:
+F54C  8D 64 02              sta R_A
+F54F  8E 65 02              stx R_X
+F552  8C 66 02              sty R_Y
+F555  68                    pla
+F556  8D 67 02              sta R_P
+F559  68                    pla
+F55A  8D 62 02              sta R_PCL
+F55D  68                    pla
+F55E  8D 63 02              sta R_PCH
+F561  BA                    tsx
+F562  8E 68 02              stx R_S
+F565  D8                    cld
+                            ; BRK の番地 = 積まれた PC - 2
+F566  38                    sec
+F567  AD 62 02              lda R_PCL
+F56A  E9 02                 sbc #2
+F56C  85 E0                 sta ptr
+F56E  AD 63 02              lda R_PCH
+F571  E9 00                 sbc #0
+F573  85 E1                 sta ptr+1
+F575  20 E9 F4              jsr is_our_brk
+F578  A9 01                 lda #WHY_BRK
+F57A  90 52                 bcc mon_stop
+F57C  A5 E0                 lda ptr                 ; モニターの BRK なら、その命令から続けられるように
+F57E  8D 62 02              sta R_PCL
+F581  A5 E1                 lda ptr+1
+F583  8D 63 02              sta R_PCH
+F586  A9 00                 lda #WHY_BP
+F588  80 44                 bra mon_stop
+                    
+                    ; BREAK キー(NMIVEC から)
+                    mon_nmi:
+F58A  D8                    cld
+F58B  48                    pha
+F58C  AD 6A 02              lda MON_ACTIVE
+F58F  F0 04                 beq mn_user
+F591  68                    pla                     ; モニターの中なら、いまの処理をやめてプロンプトへ
+F592  4C 27 E5              jmp mon_restart
+                    mn_user:
+F595  68                    pla
+F596  8D 64 02              sta R_A
+F599  8E 65 02              stx R_X
+F59C  8C 66 02              sty R_Y
+F59F  68                    pla
+F5A0  8D 67 02              sta R_P
+F5A3  68                    pla
+F5A4  8D 62 02              sta R_PCL
+F5A7  68                    pla
+F5A8  8D 63 02              sta R_PCH
+F5AB  BA                    tsx
+F5AC  8E 68 02              stx R_S
+F5AF  A9 02                 lda #WHY_BREAK
+F5B1  80 1B                 bra mon_stop
+                    
+                    ; RTS(G で始めたプログラムが戻ってきた)、または BIOS の MONITOR から
+                    mon_ret:
+F5B3  08                    php
+F5B4  78                    sei
+F5B5  D8                    cld
+F5B6  8D 64 02              sta R_A
+F5B9  8E 65 02              stx R_X
+F5BC  8C 66 02              sty R_Y
+F5BF  68                    pla
+F5C0  8D 67 02              sta R_P
+F5C3  BA                    tsx
+F5C4  8E 68 02              stx R_S
+F5C7  A9 01                 lda #1
+F5C9  8D 6B 02              sta FRESH
+F5CC  A9 03                 lda #WHY_RTS
+                    
+                    ; 止まったときの共通処理。A = 理由
+                    mon_stop:
+F5CE  8D 6F 02              sta STOP_WHY
+F5D1  BA                    tsx
+F5D2  8E 69 02              stx MON_SP
+F5D5  20 B0 F4              jsr remove_brks
+F5D8  A9 21                 lda #ANN_BUSY+ANN_RUN   ; BASIC の実行中の表示も消す(CALL した機械語から BIOS で入ったとき)
+F5DA  1C 02 80              trb LCD_ANN
+F5DD  A9 01                 lda #1
+F5DF  8D 6A 02              sta MON_ACTIVE
+F5E2  A9 81                 lda #$81
+F5E4  8D 10 80              sta TIMER_CTRL
+F5E7  AD 03 80              lda LCD_CTRL
+F5EA  09 01                 ora #$01
+F5EC  8D 03 80              sta LCD_CTRL
+F5EF  9C 1D 02              stz UNGOT
+F5F2  58                    cli
+                            ; ステップ実行の続き
+F5F3  AD 6F 02              lda STOP_WHY
+F5F6  D0 1C                 bne ms_show             ; WHY_BP 以外
+F5F8  AD 6C 02              lda RUN_MODE
+F5FB  C9 02                 cmp #RM_STEPGO
+F5FD  F0 0C                 beq ms_go
+F5FF  C9 01                 cmp #RM_STEP
+F601  D0 11                 bne ms_show
+F603  CE 6D 02              dec STEP_CNT
+F606  F0 0C                 beq ms_show
+F608  4C 03 F3              jmp do_step
+                    ms_go:
+F60B  9C 6C 02              stz RUN_MODE
+F60E  20 72 F4              jsr install_bps
+F611  4C 1B F5              jmp resume
+                    ms_show:
+F614  9C 6C 02              stz RUN_MODE
+F617  20 4C E3              jsr cursor_off
+F61A  20 54 E3              jsr crlf_if
+F61D  AD 6F 02              lda STOP_WHY
+F620  C9 03                 cmp #WHY_RTS
+F622  F0 06                 beq ms_rts
+F624  20 99 E9              jsr show_regs
+F627  4C 27 E5              jmp mon_restart
+                    ms_rts:
+F62A  20 AC E9              jsr show_regs2
+F62D  4C 27 E5              jmp mon_restart
+                    
+                    ; ===================================================================
+                    ; データ
+                    ; ===================================================================
+F630  00 60 C0 20   row_lo:     .byte <VRAM, <(VRAM+96), <(VRAM+192), <(VRAM+288)
+F634  04 04 04 05   row_hi:     .byte >VRAM, >(VRAM+96), >(VRAM+192), >(VRAM+288)
+F638  01 02 04 08 + bitmask:    .byte $01, $02, $04, $08, $10, $20, $40, $80
+F640  FE FD FB F7 + row_select: .byte $FE, $FD, $FB, $F7, $EF, $DF, $BF, $7F
+                    
+                    ; キーの位置(行×8+列)-> 文字。0 は文字のないキー
+                    keymap:
+F648  41 42 43 44 +         .byte "ABCDEFGH"
+F650  49 4A 4B 4C +         .byte "IJKLMNOP"
+F658  51 52 53 54 +         .byte "QRSTUVWX"
+F660  59 5A 20 0D +         .byte "YZ ", K_RET, 0, K_DEL, ",."
+F668  30 31 32 33 +         .byte "01234567"
+F670  38 39 2B 2D +         .byte "89+-*/=", 0
+F678  11 12 13 14 +         .byte K_LEFT, K_RIGHT, K_UP, K_DOWN, 0, 0, 0, 0
+F680  00 00 00 00 +         .byte 0, 0, 0, 0, 0, 0, 0, 0
+                    ; SHIFT を押しているとき
+                    keymap_s:
+F688  61 62 63 64 +         .byte "abcdefgh"
+F690  69 6A 6B 6C +         .byte "ijklmnop"
+F698  71 72 73 74 +         .byte "qrstuvwx"
+F6A0  79 7A 20 0D +         .byte "yz ", K_RET, 0, K_DEL, "<>"
+F6A8  40 21 22 23 +         .byte "@!", '"', "#$%&'"
+F6B0  28 29 3B 5F +         .byte "();_:?^", 0
+F6B8  11 12 13 14 +         .byte K_LEFT, K_RIGHT, K_UP, K_DOWN, 0, 0, 0, 0
+F6C0  00 00 00 00 +         .byte 0, 0, 0, 0, 0, 0, 0, 0
+                    
+                    ; 5×7フォント(tools/mkfont.js が生成。手で直さないこと)
+                    ; $20-$7E の95文字 × 5バイト
+                    font:
+F6C8  00 00 00 00 +         .byte $00, $00, $00, $00, $00   ; $20  
+F6CD  00 00 5F 00 +         .byte $00, $00, $5F, $00, $00   ; $21 !
+F6D2  00 07 00 07 +         .byte $00, $07, $00, $07, $00   ; $22 "
+F6D7  14 7F 14 7F +         .byte $14, $7F, $14, $7F, $14   ; $23 #
+F6DC  24 2A 7F 2A +         .byte $24, $2A, $7F, $2A, $12   ; $24 $
+F6E1  23 13 08 64 +         .byte $23, $13, $08, $64, $62   ; $25 %
+F6E6  36 49 55 22 +         .byte $36, $49, $55, $22, $50   ; $26 &
+F6EB  00 04 03 00 +         .byte $00, $04, $03, $00, $00   ; $27 '
+F6F0  00 1C 22 41 +         .byte $00, $1C, $22, $41, $00   ; $28 (
+F6F5  00 41 22 1C +         .byte $00, $41, $22, $1C, $00   ; $29 )
+F6FA  14 08 3E 08 +         .byte $14, $08, $3E, $08, $14   ; $2A *
+F6FF  08 08 3E 08 +         .byte $08, $08, $3E, $08, $08   ; $2B +
+F704  00 50 30 00 +         .byte $00, $50, $30, $00, $00   ; $2C ,
+F709  08 08 08 08 +         .byte $08, $08, $08, $08, $08   ; $2D -
+F70E  00 60 60 00 +         .byte $00, $60, $60, $00, $00   ; $2E .
+F713  20 10 08 04 +         .byte $20, $10, $08, $04, $02   ; $2F /
+F718  3E 51 49 45 +         .byte $3E, $51, $49, $45, $3E   ; $30 0
+F71D  00 42 7F 40 +         .byte $00, $42, $7F, $40, $00   ; $31 1
+F722  42 61 51 49 +         .byte $42, $61, $51, $49, $46   ; $32 2
+F727  21 41 45 4B +         .byte $21, $41, $45, $4B, $31   ; $33 3
+F72C  18 14 12 7F +         .byte $18, $14, $12, $7F, $10   ; $34 4
+F731  27 45 45 45 +         .byte $27, $45, $45, $45, $39   ; $35 5
+F736  3C 4A 49 49 +         .byte $3C, $4A, $49, $49, $30   ; $36 6
+F73B  01 71 09 05 +         .byte $01, $71, $09, $05, $03   ; $37 7
+F740  36 49 49 49 +         .byte $36, $49, $49, $49, $36   ; $38 8
+F745  06 49 49 29 +         .byte $06, $49, $49, $29, $1E   ; $39 9
+F74A  00 36 36 00 +         .byte $00, $36, $36, $00, $00   ; $3A :
+F74F  00 56 36 00 +         .byte $00, $56, $36, $00, $00   ; $3B ;
+F754  08 14 22 41 +         .byte $08, $14, $22, $41, $00   ; $3C <
+F759  14 14 14 14 +         .byte $14, $14, $14, $14, $14   ; $3D =
+F75E  00 41 22 14 +         .byte $00, $41, $22, $14, $08   ; $3E >
+F763  02 01 51 09 +         .byte $02, $01, $51, $09, $06   ; $3F ?
+F768  32 49 79 41 +         .byte $32, $49, $79, $41, $3E   ; $40 @
+F76D  7E 09 09 09 +         .byte $7E, $09, $09, $09, $7E   ; $41 A
+F772  7F 49 49 49 +         .byte $7F, $49, $49, $49, $36   ; $42 B
+F777  3E 41 41 41 +         .byte $3E, $41, $41, $41, $22   ; $43 C
+F77C  7F 41 41 22 +         .byte $7F, $41, $41, $22, $1C   ; $44 D
+F781  7F 49 49 49 +         .byte $7F, $49, $49, $49, $41   ; $45 E
+F786  7F 09 09 09 +         .byte $7F, $09, $09, $09, $01   ; $46 F
+F78B  3E 41 49 49 +         .byte $3E, $41, $49, $49, $7A   ; $47 G
+F790  7F 08 08 08 +         .byte $7F, $08, $08, $08, $7F   ; $48 H
+F795  00 41 7F 41 +         .byte $00, $41, $7F, $41, $00   ; $49 I
+F79A  20 40 41 3F +         .byte $20, $40, $41, $3F, $01   ; $4A J
+F79F  7F 08 14 22 +         .byte $7F, $08, $14, $22, $41   ; $4B K
+F7A4  7F 40 40 40 +         .byte $7F, $40, $40, $40, $40   ; $4C L
+F7A9  7F 02 0C 02 +         .byte $7F, $02, $0C, $02, $7F   ; $4D M
+F7AE  7F 04 08 10 +         .byte $7F, $04, $08, $10, $7F   ; $4E N
+F7B3  3E 41 41 41 +         .byte $3E, $41, $41, $41, $3E   ; $4F O
+F7B8  7F 09 09 09 +         .byte $7F, $09, $09, $09, $06   ; $50 P
+F7BD  3E 41 51 21 +         .byte $3E, $41, $51, $21, $5E   ; $51 Q
+F7C2  7F 09 19 29 +         .byte $7F, $09, $19, $29, $46   ; $52 R
+F7C7  46 49 49 49 +         .byte $46, $49, $49, $49, $31   ; $53 S
+F7CC  01 01 7F 01 +         .byte $01, $01, $7F, $01, $01   ; $54 T
+F7D1  3F 40 40 40 +         .byte $3F, $40, $40, $40, $3F   ; $55 U
+F7D6  1F 20 40 20 +         .byte $1F, $20, $40, $20, $1F   ; $56 V
+F7DB  3F 40 38 40 +         .byte $3F, $40, $38, $40, $3F   ; $57 W
+F7E0  63 14 08 14 +         .byte $63, $14, $08, $14, $63   ; $58 X
+F7E5  03 04 78 04 +         .byte $03, $04, $78, $04, $03   ; $59 Y
+F7EA  61 51 49 45 +         .byte $61, $51, $49, $45, $43   ; $5A Z
+F7EF  00 7F 41 41 +         .byte $00, $7F, $41, $41, $00   ; $5B [
+F7F4  02 04 08 10 +         .byte $02, $04, $08, $10, $20   ; $5C \
+F7F9  00 41 41 7F +         .byte $00, $41, $41, $7F, $00   ; $5D ]
+F7FE  04 02 01 02 +         .byte $04, $02, $01, $02, $04   ; $5E ^
+F803  40 40 40 40 +         .byte $40, $40, $40, $40, $40   ; $5F _
+F808  00 01 02 04 +         .byte $00, $01, $02, $04, $00   ; $60 `
+F80D  20 54 54 54 +         .byte $20, $54, $54, $54, $78   ; $61 a
+F812  7F 48 44 44 +         .byte $7F, $48, $44, $44, $38   ; $62 b
+F817  38 44 44 44 +         .byte $38, $44, $44, $44, $20   ; $63 c
+F81C  38 44 44 48 +         .byte $38, $44, $44, $48, $7F   ; $64 d
+F821  38 54 54 54 +         .byte $38, $54, $54, $54, $18   ; $65 e
+F826  08 7E 09 01 +         .byte $08, $7E, $09, $01, $02   ; $66 f
+F82B  0C 52 52 52 +         .byte $0C, $52, $52, $52, $3E   ; $67 g
+F830  7F 08 04 04 +         .byte $7F, $08, $04, $04, $78   ; $68 h
+F835  00 44 7D 40 +         .byte $00, $44, $7D, $40, $00   ; $69 i
+F83A  20 40 44 3D +         .byte $20, $40, $44, $3D, $00   ; $6A j
+F83F  7F 10 28 44 +         .byte $7F, $10, $28, $44, $00   ; $6B k
+F844  00 41 7F 40 +         .byte $00, $41, $7F, $40, $00   ; $6C l
+F849  7C 04 18 04 +         .byte $7C, $04, $18, $04, $78   ; $6D m
+F84E  7C 08 04 04 +         .byte $7C, $08, $04, $04, $78   ; $6E n
+F853  38 44 44 44 +         .byte $38, $44, $44, $44, $38   ; $6F o
+F858  7C 14 14 14 +         .byte $7C, $14, $14, $14, $08   ; $70 p
+F85D  08 14 14 18 +         .byte $08, $14, $14, $18, $7C   ; $71 q
+F862  7C 08 04 04 +         .byte $7C, $08, $04, $04, $08   ; $72 r
+F867  48 54 54 54 +         .byte $48, $54, $54, $54, $20   ; $73 s
+F86C  04 3F 44 40 +         .byte $04, $3F, $44, $40, $20   ; $74 t
+F871  3C 40 40 20 +         .byte $3C, $40, $40, $20, $7C   ; $75 u
+F876  1C 20 40 20 +         .byte $1C, $20, $40, $20, $1C   ; $76 v
+F87B  3C 40 30 40 +         .byte $3C, $40, $30, $40, $3C   ; $77 w
+F880  44 28 10 28 +         .byte $44, $28, $10, $28, $44   ; $78 x
+F885  0C 50 50 50 +         .byte $0C, $50, $50, $50, $3C   ; $79 y
+F88A  44 64 54 4C +         .byte $44, $64, $54, $4C, $44   ; $7A z
+F88F  00 08 36 41 +         .byte $00, $08, $36, $41, $00   ; $7B {
+F894  00 00 7F 00 +         .byte $00, $00, $7F, $00, $00   ; $7C |
+F899  00 41 36 08 +         .byte $00, $41, $36, $08, $00   ; $7D }
+F89E  08 04 08 10 +         .byte $08, $04, $08, $10, $08   ; $7E ~
+                    
+                    ; 命令表(tools/mkoptable.js が src/cpu65c02.js から生成。手で直さないこと)
+                    
+                    OPM_IMP = 0
+                    OPM_ACC = 1
+                    OPM_IMM = 2
+                    OPM_ZP = 3
+                    OPM_ZPX = 4
+                    OPM_ZPY = 5
+                    OPM_IZX = 6
+                    OPM_IZY = 7
+                    OPM_IZP = 8
+                    OPM_ABS = 9
+                    OPM_ABX = 10
+                    OPM_ABY = 11
+                    OPM_IND = 12
+                    OPM_AIX = 13
+                    OPM_REL = 14
+                    OPM_ZPR = 15
+                    OPM_N1 = 16
+                    OPM_N2 = 17
+                    OPM_N3 = 18
+                    
+                    ; オペコード -> ニーモニックの番号
+                    op_mnem:
+F8A3  00 01 02 02 +         .byte $00, $01, $02, $02, $03, $01, $04, $05, $06, $01, $04, $02, $03, $01, $04, $07   ; $00
+F8B3  08 01 01 02 +         .byte $08, $01, $01, $02, $09, $01, $04, $05, $0A, $01, $0B, $02, $09, $01, $04, $07   ; $10
+F8C3  0C 0D 02 02 +         .byte $0C, $0D, $02, $02, $0E, $0D, $0F, $05, $10, $0D, $0F, $02, $0E, $0D, $0F, $07   ; $20
+F8D3  11 0D 0D 02 +         .byte $11, $0D, $0D, $02, $0E, $0D, $0F, $05, $12, $0D, $13, $02, $0E, $0D, $0F, $07   ; $30
+F8E3  14 15 02 02 +         .byte $14, $15, $02, $02, $02, $15, $16, $05, $17, $15, $16, $02, $18, $15, $16, $07   ; $40
+F8F3  19 15 15 02 +         .byte $19, $15, $15, $02, $02, $15, $16, $05, $1A, $15, $1B, $02, $02, $15, $16, $07   ; $50
+F903  1C 1D 02 02 +         .byte $1C, $1D, $02, $02, $1E, $1D, $1F, $05, $20, $1D, $1F, $02, $18, $1D, $1F, $07   ; $60
+F913  21 1D 1D 02 +         .byte $21, $1D, $1D, $02, $1E, $1D, $1F, $05, $22, $1D, $23, $02, $18, $1D, $1F, $07   ; $70
+F923  24 25 02 02 +         .byte $24, $25, $02, $02, $26, $25, $27, $28, $29, $0E, $2A, $02, $26, $25, $27, $2B   ; $80
+F933  2C 25 25 02 +         .byte $2C, $25, $25, $02, $26, $25, $27, $28, $2D, $25, $2E, $02, $1E, $25, $1E, $2B   ; $90
+F943  2F 30 31 02 +         .byte $2F, $30, $31, $02, $2F, $30, $31, $28, $32, $30, $33, $02, $2F, $30, $31, $2B   ; $A0
+F953  34 30 30 02 +         .byte $34, $30, $30, $02, $2F, $30, $31, $28, $35, $30, $36, $02, $2F, $30, $31, $2B   ; $B0
+F963  37 38 02 02 +         .byte $37, $38, $02, $02, $37, $38, $13, $28, $39, $38, $3A, $3B, $37, $38, $13, $2B   ; $C0
+F973  3C 38 38 02 +         .byte $3C, $38, $38, $02, $02, $38, $13, $28, $3D, $38, $3E, $3F, $02, $38, $13, $2B   ; $D0
+F983  40 41 02 02 +         .byte $40, $41, $02, $02, $40, $41, $0B, $28, $42, $41, $02, $02, $40, $41, $0B, $2B   ; $E0
+F993  43 41 41 02 +         .byte $43, $41, $41, $02, $02, $41, $0B, $28, $44, $41, $45, $02, $02, $41, $0B, $2B   ; $F0
+                    
+                    ; オペコード -> アドレッシングの番号
+                    op_mode:
+F9A3  00 06 11 10 +         .byte $00, $06, $11, $10, $03, $03, $03, $03, $00, $02, $01, $10, $09, $09, $09, $0F   ; $00
+F9B3  0E 07 08 10 +         .byte $0E, $07, $08, $10, $03, $04, $04, $03, $00, $0B, $01, $10, $09, $0A, $0A, $0F   ; $10
+F9C3  09 06 11 10 +         .byte $09, $06, $11, $10, $03, $03, $03, $03, $00, $02, $01, $10, $09, $09, $09, $0F   ; $20
+F9D3  0E 07 08 10 +         .byte $0E, $07, $08, $10, $04, $04, $04, $03, $00, $0B, $01, $10, $0A, $0A, $0A, $0F   ; $30
+F9E3  00 06 11 10 +         .byte $00, $06, $11, $10, $11, $03, $03, $03, $00, $02, $01, $10, $09, $09, $09, $0F   ; $40
+F9F3  0E 07 08 10 +         .byte $0E, $07, $08, $10, $11, $04, $04, $03, $00, $0B, $00, $10, $12, $0A, $0A, $0F   ; $50
+FA03  00 06 11 10 +         .byte $00, $06, $11, $10, $03, $03, $03, $03, $00, $02, $01, $10, $0C, $09, $09, $0F   ; $60
+FA13  0E 07 08 10 +         .byte $0E, $07, $08, $10, $04, $04, $04, $03, $00, $0B, $00, $10, $0D, $0A, $0A, $0F   ; $70
+FA23  0E 06 11 10 +         .byte $0E, $06, $11, $10, $03, $03, $03, $03, $00, $02, $00, $10, $09, $09, $09, $0F   ; $80
+FA33  0E 07 08 10 +         .byte $0E, $07, $08, $10, $04, $04, $05, $03, $00, $0B, $00, $10, $09, $0A, $0A, $0F   ; $90
+FA43  02 06 02 10 +         .byte $02, $06, $02, $10, $03, $03, $03, $03, $00, $02, $00, $10, $09, $09, $09, $0F   ; $A0
+FA53  0E 07 08 10 +         .byte $0E, $07, $08, $10, $04, $04, $05, $03, $00, $0B, $00, $10, $0A, $0A, $0B, $0F   ; $B0
+FA63  02 06 11 10 +         .byte $02, $06, $11, $10, $03, $03, $03, $03, $00, $02, $00, $00, $09, $09, $09, $0F   ; $C0
+FA73  0E 07 08 10 +         .byte $0E, $07, $08, $10, $11, $04, $04, $03, $00, $0B, $00, $00, $12, $0A, $0A, $0F   ; $D0
+FA83  02 06 11 10 +         .byte $02, $06, $11, $10, $03, $03, $03, $03, $00, $02, $00, $10, $09, $09, $09, $0F   ; $E0
+FA93  0E 07 08 10 +         .byte $0E, $07, $08, $10, $11, $04, $04, $03, $00, $0B, $00, $10, $12, $0A, $0A, $0F   ; $F0
+                    
+                    ; ニーモニック(3文字ずつ)。RMB/SMB/BBR/BBS のビット番号は表示するときに付け足す
+                    mnem_text:
+FAA3  42 52 4B              .byte "BRK"   ; 0
+FAA6  4F 52 41              .byte "ORA"   ; 1
+FAA9  4E 4F 50              .byte "NOP"   ; 2
+FAAC  54 53 42              .byte "TSB"   ; 3
+FAAF  41 53 4C              .byte "ASL"   ; 4
+FAB2  52 4D 42              .byte "RMB"   ; 5
+FAB5  50 48 50              .byte "PHP"   ; 6
+FAB8  42 42 52              .byte "BBR"   ; 7
+FABB  42 50 4C              .byte "BPL"   ; 8
+FABE  54 52 42              .byte "TRB"   ; 9
+FAC1  43 4C 43              .byte "CLC"   ; 10
+FAC4  49 4E 43              .byte "INC"   ; 11
+FAC7  4A 53 52              .byte "JSR"   ; 12
+FACA  41 4E 44              .byte "AND"   ; 13
+FACD  42 49 54              .byte "BIT"   ; 14
+FAD0  52 4F 4C              .byte "ROL"   ; 15
+FAD3  50 4C 50              .byte "PLP"   ; 16
+FAD6  42 4D 49              .byte "BMI"   ; 17
+FAD9  53 45 43              .byte "SEC"   ; 18
+FADC  44 45 43              .byte "DEC"   ; 19
+FADF  52 54 49              .byte "RTI"   ; 20
+FAE2  45 4F 52              .byte "EOR"   ; 21
+FAE5  4C 53 52              .byte "LSR"   ; 22
+FAE8  50 48 41              .byte "PHA"   ; 23
+FAEB  4A 4D 50              .byte "JMP"   ; 24
+FAEE  42 56 43              .byte "BVC"   ; 25
+FAF1  43 4C 49              .byte "CLI"   ; 26
+FAF4  50 48 59              .byte "PHY"   ; 27
+FAF7  52 54 53              .byte "RTS"   ; 28
+FAFA  41 44 43              .byte "ADC"   ; 29
+FAFD  53 54 5A              .byte "STZ"   ; 30
+FB00  52 4F 52              .byte "ROR"   ; 31
+FB03  50 4C 41              .byte "PLA"   ; 32
+FB06  42 56 53              .byte "BVS"   ; 33
+FB09  53 45 49              .byte "SEI"   ; 34
+FB0C  50 4C 59              .byte "PLY"   ; 35
+FB0F  42 52 41              .byte "BRA"   ; 36
+FB12  53 54 41              .byte "STA"   ; 37
+FB15  53 54 59              .byte "STY"   ; 38
+FB18  53 54 58              .byte "STX"   ; 39
+FB1B  53 4D 42              .byte "SMB"   ; 40
+FB1E  44 45 59              .byte "DEY"   ; 41
+FB21  54 58 41              .byte "TXA"   ; 42
+FB24  42 42 53              .byte "BBS"   ; 43
+FB27  42 43 43              .byte "BCC"   ; 44
+FB2A  54 59 41              .byte "TYA"   ; 45
+FB2D  54 58 53              .byte "TXS"   ; 46
+FB30  4C 44 59              .byte "LDY"   ; 47
+FB33  4C 44 41              .byte "LDA"   ; 48
+FB36  4C 44 58              .byte "LDX"   ; 49
+FB39  54 41 59              .byte "TAY"   ; 50
+FB3C  54 41 58              .byte "TAX"   ; 51
+FB3F  42 43 53              .byte "BCS"   ; 52
+FB42  43 4C 56              .byte "CLV"   ; 53
+FB45  54 53 58              .byte "TSX"   ; 54
+FB48  43 50 59              .byte "CPY"   ; 55
+FB4B  43 4D 50              .byte "CMP"   ; 56
+FB4E  49 4E 59              .byte "INY"   ; 57
+FB51  44 45 58              .byte "DEX"   ; 58
+FB54  57 41 49              .byte "WAI"   ; 59
+FB57  42 4E 45              .byte "BNE"   ; 60
+FB5A  43 4C 44              .byte "CLD"   ; 61
+FB5D  50 48 58              .byte "PHX"   ; 62
+FB60  53 54 50              .byte "STP"   ; 63
+FB63  43 50 58              .byte "CPX"   ; 64
+FB66  53 42 43              .byte "SBC"   ; 65
+FB69  49 4E 58              .byte "INX"   ; 66
+FB6C  42 45 51              .byte "BEQ"   ; 67
+FB6F  53 45 44              .byte "SED"   ; 68
+FB72  50 4C 58              .byte "PLX"   ; 69
+                    
+                    ; アドレッシングごとの長さ、前に付ける文字、オペランドの種類、後ろに付ける文字(最大3文字)
+FB75  01 01 02 02 + m_len:  .byte 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 2, 3, 1, 2, 3
+FB88  00 00 23 00 + m_pre:  .byte 0, 0, '#', 0, 0, 0, '(', '(', '(', 0, 0, 0, '(', '(', 0, 0, 0, 0, 0
+FB9B  00 05 01 01 + m_kind: .byte 0, 5, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 4, 0, 1, 2
+FBAE  00 00 00 00 + m_suf1: .byte 0, 0, 0, 0, ',', ',', ',', ')', ')', 0, ',', ',', ')', ',', 0, 0, 0, 0, 0
+FBC1  00 00 00 00 + m_suf2: .byte 0, 0, 0, 0, 'X', 'Y', 'X', ',', 0, 0, 'X', 'Y', 0, 'X', 0, 0, 0, 0, 0
+FBD4  00 00 00 00 + m_suf3: .byte 0, 0, 0, 0, 0, 0, ')', 'Y', 0, 0, 0, 0, 0, ')', 0, 0, 0, 0, 0
+                    
+                    
+                    rom_end:
+                    
+                    ; ===================================================================
+                    ; BIOS のジャンプテーブル(番地は今後も変えない)
+                    ; ===================================================================
+FBE7  FF FF FF FF +         .org $FF00
+FF00  4C 4A E2              jmp putc                ; $FF00 CHROUT  A の文字を出力
+FF03  4C 26 E2              jmp getkey              ; $FF03 GETKEY  キーを待つ -> A
+FF06  4C 01 E2              jmp keyget              ; $FF06 KEYCHK  キーがあれば C=1, A
+FF09  4C C1 E3              jmp getline             ; $FF09 GETLINE 1行入力 -> LINEBUF, LINELEN
+FF0C  4C 63 E3              jmp prhex8              ; $FF0C PRHEX   A を16進数2桁で出力
+FF0F  4C 89 E3              jmp prinline            ; $FF0F PRINT   JSR の後ろの文字列(0終わり)を出力
+FF12  4C A5 E3              jmp sound               ; $FF12 BEEP    A=高さ X=長さ
+FF15  4C C8 E2              jmp cls                 ; $FF15 CLS     画面を消す
+FF18  4C DC E2              jmp locate              ; $FF18 LOCATE  X=桁 Y=行
+FF1B  4C B3 F5              jmp mon_ret             ; $FF1B MONITOR モニターに戻る
+FF1E  4C CA E3              jmp getline_edit        ; $FF1E GETLINE_ED LINEBUF を表示してから入力を続ける
+FF21  4C ED E0              jmp mon_enter           ; $FF21 MONENTER モニターのプロンプトに入る
+FF24  4C 34 EF              jmp tsave               ; $FF24 TSAVE   テープにブロックを足す
+FF27  4C E6 EF              jmp tfind               ; $FF27 TFIND   次のブロックの見出しを読む
+FF2A  4C 53 F0              jmp tload               ; $FF2A TLOAD   見つけたブロックのデータを読む
+FF2D  4C 4C E3              jmp cursor_off          ; $FF2D CUROFF  点滅中のカーソルを消す
+                    
+                    ; ===================================================================
+                    ; 割り込みベクタ
+                    ; ===================================================================
+FF30  FF FF FF FF +         .org $FFFA
+FFFA  2C E1 00 E0 +         .word nmi_entry, reset, irq_entry
+                    

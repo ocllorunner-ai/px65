@@ -1,0 +1,24 @@
+{
+  "name": "px65",
+  "version": "0.11.19",
+  "private": true,
+  "license": "CC0-1.0",
+  "description": "PX-65: 65C02を搭載した架空のポケコンのエミュレーター",
+  "type": "module",
+  "scripts": {
+    "test": "node test/interrupts.test.js && node test/asm.test.js && node test/bus.test.js && node test/watch.test.js && node test/monitor.test.js && node test/basic_fp.test.js && node test/basic_math.test.js && node test/basic.test.js && node test/keyqueue.test.js && node test/samples.test.js && node test/fuzz_gen.test.js && node test/fuzz.js --seed 1 --count 10 --repro-check && node test/dist.test.js",
+    "tables": "node tools/mkfont.js && node tools/mkoptable.js && node tools/mkfpconst.js",
+    "rom": "npm run tables && node tools/rom.js",
+    "monitor": "npm run tables && node tools/asm.js rom/monitor.s -o rom/monitor.bin --range A000:FFFF",
+    "testpattern": "node tools/asm.js rom/test_pattern.s -o rom/test_pattern.bin --range C000:FFFF -l rom/test_pattern.lst",
+    "screenshot": "node tools/screenshot.js rom/px65.bin docs/basic.png --frames 40",
+    "screenshot:monitor": "node tools/screenshot.js rom/monitor.bin docs/monitor.png --frames 40",
+    "screenshot:testpattern": "node tools/screenshot.js rom/test_pattern.bin docs/test_pattern.png --frames 50",
+    "test:cpu": "node test/klaus.js",
+    "samples": "node tools/mksamples.js",
+    "build": "node tools/build.js --rom rom/px65.bin",
+    "coverage": "node tools/coverage.js",
+    "fuzz": "node test/fuzz.js",
+    "mathcheck": "node test/basic_math.test.js --report"
+  }
+}

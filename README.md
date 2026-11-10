@@ -4,7 +4,7 @@
 
 65C02を搭載した架空のポケコン「PX-65」のエミュレーター。仕様は `docs/PX-65_spec.md` を参照。
 
-**ブラウザですぐ遊べる: https://ocllorunner-ai.github.io/px65/**(パソコンでもスマートフォンでも、URLを開くだけで動く)
+**ブラウザですぐ遊べる: https://ocllorunner-ai.github.io/px65/ **(パソコンでもスマートフォンでも、URLを開くだけで動く)
 
 **はじめて使うときは `docs/guide.md`(はじめてガイド)を読む。** すぐに遊べるサンプルのプログラムが `samples/samples.tap` にある(「テープを入れる」で選び、`FILES`、`LOAD "名前"`、`RUN`)。
 

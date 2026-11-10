@@ -122,7 +122,7 @@ npm run screenshot:monitor      # save the monitor's startup screen to docs/moni
 npm run screenshot:testpattern  # save the test ROM's screen to docs/test_pattern.png
 ```
 
-When you push to main on GitHub, GitHub Actions (`.github/workflows/pages.yml`) runs `npm test` and, if it passes, publishes `dist/` to the site. `npm test` also checks that `dist/` matches a fresh build from the sources, so if you forget `npm run build`, nothing is published. Pull requests are only tested.
+When you push to main on GitHub, GitHub Actions (`.github/workflows/pages.yml`) runs `npm test` and, if it passes, publishes `dist/` to the site. `npm test` also checks that `dist/` matches a fresh build from the sources, so if you forget `npm run build`, nothing is published. Only the commit at the head of main is published, so when you push several times in a row, an older commit is never published after a newer one. Pull requests, and manual runs on branches other than main, are only tested.
 
 To build with a different built-in ROM, use `node tools/build.js --rom <ROM.bin>` (without `--rom`, the test ROM is used).
 
@@ -223,7 +223,7 @@ The emulator and the built-in ROM have separate version numbers.
 
 | | Current version | Where it is shown | Where it is set |
 | --- | --- | --- | --- |
-| Emulator | 0.11.20 | At the bottom of the page (`PX-65 emulator v0.11.20`), and in the comment at the top of the distributed HTML | `version` in `package.json` (inserted by the build) |
+| Emulator | 0.11.21 | At the bottom of the page (`PX-65 emulator v0.11.21`), and in the comment at the top of the distributed HTML | `version` in `package.json` (inserted by the build) |
 | Built-in ROM | 0.11 | BASIC's startup screen (`PX-65 BASIC 0.11`), and the startup screen of the monitor-only ROM (`V0.11`) | `b_banner` in `rom/basic_main.s`, and `rom/monitor.s` |
 
 For the emulator, bug fixes raise the third number and new features raise the second. The ROM version has only two numbers (so that it fits on one line of the startup screen), and new features raise the second. Bug fixes in the ROM show up in the third number of the emulator, which contains the built-in ROM. Both become 1.0 when the project is finished.

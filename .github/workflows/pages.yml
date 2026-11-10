@@ -1,7 +1,9 @@
 # テストをして、通ったら dist/ を GitHub Pages に公開する
 #
-# - main に送ったとき(push)と、Actions の画面から手で動かしたとき: テストのあと公開する
-# - プルリクエスト: テストだけ(公開しない)
+# - main に送ったとき(push)と、Actions の画面から main で手で動かしたとき: テストのあと公開する
+# - プルリクエストと、main 以外のブランチで手で動かしたとき: テストだけ(公開しない)
+# - 公開するのは main の先頭のコミットだけ。続けて送ってテストの終わる順が逆になっても、
+#   古いコミットを後から公開しない(公開の直前に main の先頭か調べる。P27-01)
 # 公開には、リポジトリの Settings → Pages → Source を「GitHub Actions」にしておく必要がある。
 #
 # npm test は、dist/ の HTML がソースから作り直したものと同じかも調べる(test/dist.test.js)。
@@ -39,7 +41,7 @@ jobs:
   deploy:
     name: Publish to GitHub Pages
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:          # 仕事ごとに書くと上の permissions は置き換わるので、contents: read も書く
@@ -54,9 +56,27 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/configure-pages@v6
-      - uses: actions/upload-pages-artifact@v5
+      # このコミットが今も main の先頭か。先頭でなければ(後から新しいコミットが送られていれば)公開しない。
+      # concurrency で公開は1つずつ動くので、ここで調べれば、新しいコミットの公開の後に古いものが上書きしない。
+      # checkout の ref を main に変えるのはだめ(テストしたコミットと公開するコミットが違ってしまう)
+      - name: Check whether this commit is still main HEAD
+        id: current
+        shell: bash
+        run: |
+          latest=$(git ls-remote --exit-code origin refs/heads/main | cut -f1)
+          test -n "$latest"
+          if [ "$GITHUB_SHA" = "$latest" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skip publishing $GITHUB_SHA: main is now $latest."
+          fi
+      - if: steps.current.outputs.publish == 'true'
+        uses: actions/configure-pages@v6
+      - if: steps.current.outputs.publish == 'true'
+        uses: actions/upload-pages-artifact@v5
         with:
           path: dist
       - id: deployment
+        if: steps.current.outputs.publish == 'true'
         uses: actions/deploy-pages@v5

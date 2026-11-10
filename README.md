@@ -120,7 +120,7 @@ npm run screenshot:monitor      # モニターの起動画面を docs/monitor.pn
 npm run screenshot:testpattern  # テスト用ROMの画面を docs/test_pattern.png に保存
 ```
 
-GitHub の main に送ると、GitHub Actions(`.github/workflows/pages.yml`)が `npm test` をして、通ったら `dist/` を公開ページに出す。`npm test` は `dist/` がソースから作り直したものと同じかも調べるので、`npm run build` を忘れて送ると公開されない。プルリクエストではテストだけをする。
+GitHub の main に送ると、GitHub Actions(`.github/workflows/pages.yml`)が `npm test` をして、通ったら `dist/` を公開ページに出す。`npm test` は `dist/` がソースから作り直したものと同じかも調べるので、`npm run build` を忘れて送ると公開されない。公開するのは main の先頭のコミットだけで、続けて送ったときに古いコミットが後から公開されることはない。プルリクエストと、main 以外のブランチで手で動かしたときは、テストだけをする。
 
 別のROMを内蔵ROMにするときは `node tools/build.js --rom <ROM.bin>`(`--rom` を省くとテスト用ROMになる)。
 
@@ -221,7 +221,7 @@ npm run test:cpu -- ../6502tests
 
 | | 今のバージョン | 表示される場所 | 決めている所 |
 | --- | --- | --- | --- |
-| エミュレーター | 0.11.20 | 画面のいちばん下(`PX-65 emulator v0.11.20`)、配布用HTMLの先頭のコメント | `package.json` の `version`(ビルドのときに埋め込む) |
+| エミュレーター | 0.11.21 | 画面のいちばん下(`PX-65 emulator v0.11.21`)、配布用HTMLの先頭のコメント | `package.json` の `version`(ビルドのときに埋め込む) |
 | 内蔵ROM | 0.11 | BASIC の起動画面(`PX-65 BASIC 0.11`)、モニターだけのROMの起動画面(`V0.11`) | `rom/basic_main.s` の `b_banner`、`rom/monitor.s` |
 
 エミュレーターは、不具合の修正では3つ目の数字を、機能の追加では2つ目の数字を上げます。ROM の番号は(起動画面の1行に収めるため)2つだけで、機能の追加で2つ目の数字を上げます。ROM の不具合の修正は、内蔵ROMを含むエミュレーターの3つ目の数字に表れます。完成したら、どちらも 1.0 にします。

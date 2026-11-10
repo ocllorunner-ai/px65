@@ -3,6 +3,7 @@
 //   node tools/build.js [--rom rom/test_pattern.bin]
 //
 // 日本語版 dist/px65.html と英語版 dist/px65-en.html を作る。文言は web/i18n.js にある。
+// 公開ページ(GitHub Pages)の入口 dist/index.html も、web/home.html から作る(日英を選ぶだけのページ)。
 //
 // ブラウザは file:// で開いたページから別のJavaScriptファイル(ESモジュール)を読み込めないため、
 // import / export を取り除いて1つの <script> に入れる。
@@ -77,6 +78,15 @@ function render(template, lang, romBytes) {
   return html;
 }
 
+// 入口のページ。{{version}} だけを埋める
+function renderHome() {
+  const template = readFileSync(join(root, 'web/home.html'), 'utf8');
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => {
+    if (key !== 'version') throw new Error(`web/home.html の {{${key}}} は使えません`);
+    return VERSION;
+  });
+}
+
 // 出力ファイル名 → HTML(ファイルには書かない。test/dist.test.js が dist/ と比べる)
 export function buildAll(romPath) {
   checkStrings();
@@ -85,6 +95,7 @@ export function buildAll(romPath) {
   const romBytes = readFileSync(join(root, romPath));
   const out = {};
   for (const [lang, file] of Object.entries(LANGS)) out[file] = { lang, html: render(template, lang, romBytes) };
+  out['dist/index.html'] = { lang: 'ja/en', html: renderHome() };
   return out;
 }
 

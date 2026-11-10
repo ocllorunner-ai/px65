@@ -1,0 +1,6 @@
+# npm run coverage の結果(作り直せる)
+coverage/
+# 依存するパッケージはないが、念のため
+node_modules/
+# 実験用のテスト(test/_try.js など)
+test/_*.js

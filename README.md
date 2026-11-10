@@ -4,13 +4,15 @@
 
 65C02を搭載した架空のポケコン「PX-65」のエミュレーター。仕様は `docs/PX-65_spec.md` を参照。
 
+**ブラウザですぐ遊べる: https://ocllorunner-ai.github.io/px65/**(パソコンでもスマートフォンでも、URLを開くだけで動く)
+
 **はじめて使うときは `docs/guide.md`(はじめてガイド)を読む。** すぐに遊べるサンプルのプログラムが `samples/samples.tap` にある(「テープを入れる」で選び、`FILES`、`LOAD "名前"`、`RUN`)。
 
 ![エミュレーターの画面](docs/ui.png)
 
 ## すぐに試す
 
-`dist/px65.html`(日本語版)か `dist/px65-en.html`(英語版)をダブルクリックしてブラウザで開くだけで動く。インストールもサーバーも要らない。
+公開ページ https://ocllorunner-ai.github.io/px65/ を開いて「日本語」か「English」を選ぶ。または、`dist/px65.html`(日本語版)か `dist/px65-en.html`(英語版)をダウンロードしてダブルクリックしても動く。インストールもサーバーも要らない。
 
 - 画面のキーをクリックするか、PCのキーボードで入力する(EnterがRET、BackspaceがDEL、EscがBREAK)
 - 画面の SHIFT キーは、押すと次の1文字だけ効く。「SHIFTは次の1文字だけ」のチェックを外すと、押している間だけ効く方式になる(設定は次回も残る)
@@ -42,7 +44,7 @@ PX-65 BASIC 0.11
 - デバッガは「デバッガを表示」で開く
 - 振動に対応した端末(主にAndroid)では、キーを押すと短く振動する。「キーを押したら振動」で切り替えられ、設定は次回も残る。iPhoneはブラウザが振動に対応していないので、この設定は表示されない
 - iPhoneはマナーモードのとき音が出ない
-- スマートフォンでは、ダウンロードしたHTMLファイルを直接開けないことが多い。GitHub Pagesなどに置いてURLで開く
+- スマートフォンでは、ダウンロードしたHTMLファイルを直接開けないことが多い。公開ページ https://ocllorunner-ai.github.io/px65/ をURLで開く
 
 ## 現在の状態
 
@@ -64,10 +66,12 @@ PX-65 BASIC 0.11
 | `src/machine.js` | CPUとバスをつなぐ本体。フレーム単位で実行、状態の保存と復元 |
 | `src/disasm.js` | 逆アセンブラ(デバッガ用) |
 | `web/index.html` | UIのHTMLとCSS(ビルド前のひな形) |
+| `web/home.html` | 公開ページの入口 `dist/index.html` のひな形(日本語と英語を選ぶ) |
 | `web/ui.js` | UI(キーボード、液晶、音、操作、デバッガ) |
 | `web/keyqueue.js` | キーの押す・離すを、ROMが読み落とさない間隔でキーマトリクスに反映する |
 | `web/i18n.js` | UIの文言(日本語と英語) |
-| `tools/build.js` | 全部を1ファイルにまとめ、日本語版と英語版を作る |
+| `tools/build.js` | 全部を1ファイルにまとめ、日本語版と英語版を作る。公開ページの入口 `dist/index.html` も作る |
+| `.github/workflows/pages.yml` | GitHub で、main に送るたびに `npm test`(Node 18 と 24)をして、通ったら `dist/` を GitHub Pages に公開する |
 | `tools/asm.js` | 65C02アセンブラ |
 | `tools/rom.js` | BASIC(`$A000-$DFFF`)とモニター(`$E000-$FFFF`)をアセンブルして内蔵ROM `rom/px65.bin` を作る |
 | `tools/mkfont.js` | モニターのフォント(`rom/font.s`)を作る |
@@ -94,6 +98,7 @@ PX-65 BASIC 0.11
 | `docs/ui-en.png` | 英語版の画面(英語の README で使う) |
 | `dist/px65.html` | ビルド済みのエミュレーター(日本語版) |
 | `dist/px65-en.html` | ビルド済みのエミュレーター(英語版) |
+| `dist/index.html` | 公開ページの入口(日本語と英語を選ぶ) |
 | `test/` | テスト(`test/watch.js` はROMの動きの見張りとカバレッジの記録) |
 
 Node.js 18以降があれば、追加のインストールなしで全部動く。
@@ -107,13 +112,15 @@ npm run fuzz          # ランダムな入力で BASIC を試す(ファジング
 npm run mathcheck     # 数学関数の誤差を大きく調べる(下を参照)
 npm run rom           # 内蔵ROM rom/px65.bin を作る(フォント、命令表、定数の生成とアセンブル)
 npm run monitor       # モニターだけのROM rom/monitor.bin を作る
-npm run build         # rom/px65.bin を内蔵ROMにして dist/ の2ファイルを作り直す(src/ や web/ や ROM を変えたら実行)
+npm run build         # rom/px65.bin を内蔵ROMにして dist/ の3ファイルを作り直す(src/ や web/ や ROM を変えたら実行)
 npm run samples       # samples/*.bas から samples/samples.tap を作る(サンプルか ROM を変えたら実行)
 npm run testpattern   # テスト用ROMをアセンブル
 npm run screenshot    # BASICの起動画面を docs/basic.png に保存
 npm run screenshot:monitor      # モニターの起動画面を docs/monitor.png に保存
 npm run screenshot:testpattern  # テスト用ROMの画面を docs/test_pattern.png に保存
 ```
+
+GitHub の main に送ると、GitHub Actions(`.github/workflows/pages.yml`)が `npm test` をして、通ったら `dist/` を公開ページに出す。`npm test` は `dist/` がソースから作り直したものと同じかも調べるので、`npm run build` を忘れて送ると公開されない。プルリクエストではテストだけをする。
 
 別のROMを内蔵ROMにするときは `node tools/build.js --rom <ROM.bin>`(`--rom` を省くとテスト用ROMになる)。
 
@@ -214,7 +221,7 @@ npm run test:cpu -- ../6502tests
 
 | | 今のバージョン | 表示される場所 | 決めている所 |
 | --- | --- | --- | --- |
-| エミュレーター | 0.11.19 | 画面のいちばん下(`PX-65 emulator v0.11.19`)、配布用HTMLの先頭のコメント | `package.json` の `version`(ビルドのときに埋め込む) |
+| エミュレーター | 0.11.20 | 画面のいちばん下(`PX-65 emulator v0.11.20`)、配布用HTMLの先頭のコメント | `package.json` の `version`(ビルドのときに埋め込む) |
 | 内蔵ROM | 0.11 | BASIC の起動画面(`PX-65 BASIC 0.11`)、モニターだけのROMの起動画面(`V0.11`) | `rom/basic_main.s` の `b_banner`、`rom/monitor.s` |
 
 エミュレーターは、不具合の修正では3つ目の数字を、機能の追加では2つ目の数字を上げます。ROM の番号は(起動画面の1行に収めるため)2つだけで、機能の追加で2つ目の数字を上げます。ROM の不具合の修正は、内蔵ROMを含むエミュレーターの3つ目の数字に表れます。完成したら、どちらも 1.0 にします。

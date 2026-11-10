@@ -1,0 +1,62 @@
+# テストをして、通ったら dist/ を GitHub Pages に公開する
+#
+# - main に送ったとき(push)と、Actions の画面から手で動かしたとき: テストのあと公開する
+# - プルリクエスト: テストだけ(公開しない)
+# 公開には、リポジトリの Settings → Pages → Source を「GitHub Actions」にしておく必要がある。
+#
+# npm test は、dist/ の HTML がソースから作り直したものと同じかも調べる(test/dist.test.js)。
+# そのため、公開されるのは、テストの通ったソースと同じ中身の dist/ になる。
+
+name: Test and publish
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: npm test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # README の「Node.js 18 以上」の下限と、新しい版
+        node: [18, 24]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false   # 依存するパッケージがないので、キャッシュは要らない
+      - run: npm test
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:          # 仕事ごとに書くと上の permissions は置き換わるので、contents: read も書く
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v5

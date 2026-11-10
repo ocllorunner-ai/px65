@@ -1,0 +1,124 @@
+<!doctype html>
+<!-- PX-65 emulator v0.11.20. CC0 1.0 Universal (public domain dedication): https://creativecommons.org/publicdomain/zero/1.0/ -->
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PX-65</title>
+<meta name="description" content="PX-65: an emulator of an imaginary 65C02 pocket computer with BASIC and a monitor. / 65C02 を積んだ架空のポケコン PX-65 のエミュレーター。">
+<style>
+:root {
+  --desk: #74808c;
+  --desk-shade: #67727d;
+  --body: #1f2b45;
+  --body-edge: #141c30;
+  --plate: #2b3a5e;
+  --silk: #c5cfe2;
+  --silk-dim: #8391ad;
+  --lcd: #a7b893;
+  --lcd-ink: #222b1e;
+  --key-fn: #d8a52b;
+  --key-fn-ink: #2a2008;
+  --sans: "Yu Gothic UI", "Hiragino Sans", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  font-family: var(--sans);
+  color: var(--silk);
+  background: var(--desk);
+  background-image: radial-gradient(circle at 30% 20%, #7f8b97 0, var(--desk) 45%, var(--desk-shade) 100%);
+}
+main {
+  width: 100%;
+  max-width: 560px;
+  background: var(--body);
+  border: 3px solid var(--body-edge);
+  border-radius: 22px;
+  padding: 28px 24px 22px;
+  box-shadow: 0 18px 40px rgba(20, 28, 48, 0.45);
+}
+h1 {
+  margin: 0;
+  font-size: 2.2rem;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: var(--silk);
+}
+.lcd {
+  margin: 18px 0 22px;
+  padding: 14px 16px;
+  background: var(--lcd);
+  color: var(--lcd-ink);
+  border: 10px solid #111827;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: hidden;
+}
+p { margin: 0 0 10px; line-height: 1.6; }
+.en { color: var(--silk-dim); }
+.go {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 22px 0 18px;
+}
+.go a {
+  display: block;
+  padding: 14px 10px;
+  border-radius: 10px;
+  background: var(--key-fn);
+  color: var(--key-fn-ink);
+  box-shadow: 0 4px 0 #9c7616;
+  font-weight: 700;
+  font-size: 1.05rem;
+  text-align: center;
+  text-decoration: none;
+}
+.go a:hover { filter: brightness(1.06); }
+.go a:active { transform: translateY(3px); box-shadow: 0 1px 0 #9c7616; }
+.go a:focus-visible { outline: 3px solid var(--silk); outline-offset: 3px; }
+.go small { display: block; font-weight: 500; font-size: 0.8rem; margin-top: 2px; }
+footer {
+  border-top: 1px solid var(--plate);
+  padding-top: 12px;
+  font-size: 0.82rem;
+  color: var(--silk-dim);
+  line-height: 1.7;
+}
+footer a { color: var(--silk); }
+@media (max-width: 420px) {
+  .go { grid-template-columns: 1fr; }
+  .lcd { font-size: 0.8rem; }
+}
+</style>
+</head>
+<body>
+<main>
+  <h1>PX-65</h1>
+  <div class="lcd" aria-hidden="true">PX-65 BASIC 0.11
+30717 BYTES FREE
+&gt;PRINT SIN(PI/6)
+ .5</div>
+  <p>65C02 を積んだ架空のポケットコンピューター「PX-65」のエミュレーターです。BASIC とモニターが入っています。ブラウザで開くだけで動きます。</p>
+  <p class="en" lang="en">An emulator of PX-65, an imaginary pocket computer with a 65C02, BASIC and a monitor. It runs in your browser.</p>
+  <div class="go">
+    <a href="px65.html">日本語<small>px65.html</small></a>
+    <a href="px65-en.html" lang="en">English<small>px65-en.html</small></a>
+  </div>
+  <footer>
+    <div>はじめての方は <a href="https://github.com/ocllorunner-ai/px65/blob/main/docs/guide.md">はじめてガイド</a> / <span lang="en">New here? Read the <a href="https://github.com/ocllorunner-ai/px65/blob/main/docs/guide.en.md">getting started guide</a>.</span></div>
+    <div>ソース / <span lang="en">Source</span>: <a href="https://github.com/ocllorunner-ai/px65">github.com/ocllorunner-ai/px65</a> · CC0 1.0 · v0.11.20</div>
+  </footer>
+</main>
+</body>
+</html>

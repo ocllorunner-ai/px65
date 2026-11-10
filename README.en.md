@@ -4,13 +4,15 @@
 
 An emulator for the PX-65, an imaginary pocket computer built around the 65C02. See `docs/PX-65_spec.md` for the hardware specification (Japanese only).
 
+**Play it in your browser: https://ocllorunner-ai.github.io/px65/** (just open the URL, on a computer or a phone)
+
 **New to the PX-65? Start with `docs/guide.en.md` (Getting Started).** Ready-to-play sample programs are in `samples/samples.tap` (choose it with **Insert tape**, then type `FILES`, `LOAD "NAME"`, `RUN`).
 
 ![The emulator](docs/ui-en.png)
 
 ## Try it now
 
-Just double-click `dist/px65-en.html` (English) or `dist/px65.html` (Japanese) to open it in your browser. Nothing to install and no server needed.
+Open https://ocllorunner-ai.github.io/px65/ and choose **English** or **日本語**. Or download `dist/px65-en.html` (English) or `dist/px65.html` (Japanese) and double-click it. Nothing to install and no server needed.
 
 - Click the keys on screen or type on your keyboard (Enter is RET, Backspace is DEL, Esc is BREAK)
 - The on-screen SHIFT key applies to the next key only. Uncheck **SHIFT for the next key only** to make it work only while held down (the setting is remembered)
@@ -42,7 +44,7 @@ The small characters in the top-right corner of the on-screen keys are what the 
 - Open the debugger with **Show debugger**
 - On devices that can vibrate (mostly Android), keys give a short vibration. **Vibrate on key press** turns it on and off, and the setting is remembered. iPhone browsers don't support vibration, so the setting isn't shown there
 - iPhones make no sound in silent mode
-- Phones often can't open a downloaded HTML file directly. Put it on a site such as GitHub Pages and open it by its URL
+- Phones often can't open a downloaded HTML file directly. Open https://ocllorunner-ai.github.io/px65/ by its URL instead
 
 ## Status
 
@@ -64,10 +66,12 @@ The small characters in the top-right corner of the on-screen keys are what the 
 | `src/machine.js` | Connects the CPU and the bus. Runs frame by frame; saves and restores state |
 | `src/disasm.js` | Disassembler (for the debugger) |
 | `web/index.html` | UI HTML and CSS (template used by the build) |
+| `web/home.html` | Template for `dist/index.html`, the entrance to the published site (choose Japanese or English) |
 | `web/ui.js` | UI (keyboard, LCD, sound, controls, debugger) |
 | `web/keyqueue.js` | Applies key presses and releases to the key matrix at intervals the ROM won't miss |
 | `web/i18n.js` | UI text (Japanese and English) |
-| `tools/build.js` | Bundles everything into one file, in Japanese and English versions |
+| `tools/build.js` | Bundles everything into one file, in Japanese and English versions. Also makes `dist/index.html`, the entrance to the published site |
+| `.github/workflows/pages.yml` | On GitHub, runs `npm test` (Node 18 and 24) on every push to main, and publishes `dist/` to GitHub Pages if it passes |
 | `tools/asm.js` | 65C02 assembler |
 | `tools/rom.js` | Assembles BASIC (`$A000-$DFFF`) and the monitor (`$E000-$FFFF`) into the built-in ROM `rom/px65.bin` |
 | `tools/mkfont.js` | Generates the monitor's font (`rom/font.s`) |
@@ -94,6 +98,7 @@ The small characters in the top-right corner of the on-screen keys are what the 
 | `samples/samples.tap` | Tape with all the samples (built from `samples/*.bas` by `npm run samples`) |
 | `dist/px65.html` | Built emulator (Japanese) |
 | `dist/px65-en.html` | Built emulator (English) |
+| `dist/index.html` | Entrance to the published site (choose Japanese or English) |
 | `test/` | Tests (`test/watch.js` watches what the ROM does and records coverage) |
 
 The Japanese documents have the same names without `.en` (`README.md`, `docs/guide.md`, `docs/basic.md`, `docs/monitor.md`).
@@ -109,13 +114,15 @@ npm run fuzz          # try BASIC with random input (fuzzing; see below)
 npm run mathcheck     # check the error of the math functions on many cases (see below)
 npm run rom           # build the built-in ROM rom/px65.bin (generates the font, opcode table and constants, then assembles)
 npm run monitor       # build the monitor-only ROM rom/monitor.bin
-npm run build         # rebuild the two files in dist/ with rom/px65.bin as the built-in ROM (run after changing src/, web/ or the ROM)
+npm run build         # rebuild the three files in dist/ with rom/px65.bin as the built-in ROM (run after changing src/, web/ or the ROM)
 npm run samples       # build samples/samples.tap from samples/*.bas (run after changing the samples or the ROM)
 npm run testpattern   # assemble the test ROM
 npm run screenshot    # save BASIC's startup screen to docs/basic.png
 npm run screenshot:monitor      # save the monitor's startup screen to docs/monitor.png
 npm run screenshot:testpattern  # save the test ROM's screen to docs/test_pattern.png
 ```
+
+When you push to main on GitHub, GitHub Actions (`.github/workflows/pages.yml`) runs `npm test` and, if it passes, publishes `dist/` to the site. `npm test` also checks that `dist/` matches a fresh build from the sources, so if you forget `npm run build`, nothing is published. Pull requests are only tested.
 
 To build with a different built-in ROM, use `node tools/build.js --rom <ROM.bin>` (without `--rom`, the test ROM is used).
 
@@ -216,7 +223,7 @@ The emulator and the built-in ROM have separate version numbers.
 
 | | Current version | Where it is shown | Where it is set |
 | --- | --- | --- | --- |
-| Emulator | 0.11.19 | At the bottom of the page (`PX-65 emulator v0.11.19`), and in the comment at the top of the distributed HTML | `version` in `package.json` (inserted by the build) |
+| Emulator | 0.11.20 | At the bottom of the page (`PX-65 emulator v0.11.20`), and in the comment at the top of the distributed HTML | `version` in `package.json` (inserted by the build) |
 | Built-in ROM | 0.11 | BASIC's startup screen (`PX-65 BASIC 0.11`), and the startup screen of the monitor-only ROM (`V0.11`) | `b_banner` in `rom/basic_main.s`, and `rom/monitor.s` |
 
 For the emulator, bug fixes raise the third number and new features raise the second. The ROM version has only two numbers (so that it fits on one line of the startup screen), and new features raise the second. Bug fixes in the ROM show up in the third number of the emulator, which contains the built-in ROM. Both become 1.0 when the project is finished.

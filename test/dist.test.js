@@ -1,7 +1,7 @@
 // 配布するファイルがソースから作り直したものと同じかのテスト
 //   node test/dist.test.js
 //
-// rom/px65.bin、rom/monitor.bin、samples/samples.tap、dist/ の2ファイルは、ソースを変えたら
+// rom/px65.bin、rom/monitor.bin、samples/samples.tap、dist/ の3ファイル(日英のエミュレーターと入口のページ)は、ソースを変えたら
 // 作り直す必要がある(npm run rom、npm run monitor、npm run samples、npm run build)。
 // 作り直し忘れをここで見つける。
 
